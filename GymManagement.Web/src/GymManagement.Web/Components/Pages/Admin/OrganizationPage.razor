@@ -1,0 +1,598 @@
+@page "/admin/organization"
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Entities
+@using GymManagement.Domain.Enums
+@inject IOrganizationService OrgService
+@inject ICurrentUserService CurrentUser
+@inject NavigationManager Navigation
+
+
+<!-- Page Header & Action Controls -->
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+    <div>
+        <h3 class="fw-bold mb-0" style="color: var(--text-main); font-weight: 800; font-size: 1.35rem;">Organization &amp; Branches</h3>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        @if (ActiveTab == "branches")
+        {
+            <button class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm d-flex align-items-center gap-1.5" @onclick="OpenAddBranchModal">
+                <i class="bi bi-building-add"></i> Add Branch
+            </button>
+        }
+        else if (ActiveTab == "staff")
+        {
+            <button class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm d-flex align-items-center gap-1.5" @onclick="OpenAddUserModal">
+                <i class="bi bi-person-plus"></i> Add Staff Account
+            </button>
+        }
+        else if (ActiveTab == "holidays")
+        {
+            <button class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm d-flex align-items-center gap-1.5" @onclick="OpenAddHolidayModal">
+                <i class="bi bi-calendar-plus"></i> Add Holiday
+            </button>
+        }
+    </div>
+</div>
+
+<!-- KPI Summary Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-sm-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+                <i class="bi bi-buildings"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Branches.Count</div>
+                <div class="stat-label">Total Branches</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-success bg-opacity-10 text-success">
+                <i class="bi bi-check-circle"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Branches.Count(b => b.IsActive)</div>
+                <div class="stat-label">Active Branches</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-info bg-opacity-10 text-info">
+                <i class="bi bi-people"></i>
+            </div>
+            <div>
+                <div class="stat-val">@StaffUsers.Count</div>
+                <div class="stat-label">Staff Accounts</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-warning bg-opacity-10 text-warning">
+                <i class="bi bi-calendar-event"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Holidays.Count</div>
+                <div class="stat-label">Holidays &amp; Closures</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Unified Tab Hub Card -->
+<div class="gym-card mb-4">
+    <div class="card-header bg-transparent border-bottom px-4 pt-3 pb-0">
+        <ul class="nav nav-tabs border-0 gap-2">
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold @(ActiveTab == "branches" ? "active" : "")" 
+                        @onclick='() => ActiveTab = "branches"'>
+                    <i class="bi bi-shop me-2"></i>Branches
+                    <span class="badge rounded-pill bg-light text-secondary ms-2 border">@Branches.Count</span>
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold @(ActiveTab == "staff" ? "active" : "")" 
+                        @onclick='() => ActiveTab = "staff"'>
+                    <i class="bi bi-people me-2"></i>Staff Accounts
+                    <span class="badge rounded-pill bg-light text-secondary ms-2 border">@StaffUsers.Count</span>
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold @(ActiveTab == "holidays" ? "active" : "")" 
+                        @onclick='() => ActiveTab = "holidays"'>
+                    <i class="bi bi-calendar-event me-2"></i>Holidays &amp; Closures
+                    <span class="badge rounded-pill bg-light text-secondary ms-2 border">@Holidays.Count</span>
+                </button>
+            </li>
+        </ul>
+    </div>
+</div>
+
+@if (ActiveTab == "branches")
+{
+    <!-- Branches Table -->
+    <div class="gym-card mb-4">
+        <div class="gym-card-header d-flex justify-content-between align-items-center">
+            <span>Branch Locations</span>
+            <span class="badge bg-light text-dark border">@Branches.Count Branches Registered</span>
+        </div>
+        <div class="table-responsive">
+            <table class="gym-table">
+                <thead>
+                    <tr>
+                        <th>Branch Name</th>
+                        <th>Code</th>
+                        <th>Address</th>
+                        <th>Phone</th>
+                        <th>Assigned Staff</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (Branches.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="6" class="text-center py-4 text-secondary">No branches registered yet.</td>
+                        </tr>
+                    }
+                    @foreach (var b in Branches)
+                    {
+                        <tr>
+                            <td class="fw-bold">@b.BranchName</td>
+                            <td><span class="badge bg-light text-dark border">@b.BranchCode</span></td>
+                            <td>@b.Address</td>
+                            <td>@b.PhoneNumber</td>
+                            <td>
+                                <span class="badge bg-info bg-opacity-10 text-info px-2 py-1">
+                                    <i class="bi bi-person me-1"></i>@b.StaffCount Staff
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge-clean @(b.IsActive ? "badge-active" : "badge-expired")">
+                                    @(b.IsActive ? "Active" : "Inactive")
+                                </span>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+else if (ActiveTab == "staff")
+{
+    <!-- Staff Users Table -->
+    <div class="gym-card mb-4">
+        <div class="gym-card-header d-flex justify-content-between align-items-center">
+            <span>Branch Staff &amp; Role Accounts</span>
+            <span class="badge bg-light text-dark border">@StaffUsers.Count Total Staff</span>
+        </div>
+        <div class="table-responsive">
+            <table class="gym-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Name</th>
+                        <th>Assigned Branch</th>
+                        <th>Role</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (StaffUsers.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="5" class="text-center py-4 text-secondary">No staff accounts registered yet.</td>
+                        </tr>
+                    }
+                    @foreach (var u in StaffUsers)
+                    {
+                        <tr>
+                            <td class="fw-bold">@u.Username</td>
+                            <td>@u.FullName</td>
+                            <td>@u.BranchName</td>
+                            <td>
+                                <span class="badge bg-dark">@u.Role</span>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-success d-inline-flex align-items-center gap-1 px-2.5 py-1" 
+                                        @onclick="() => OpenResetPasswordModal(u)">
+                                    <i class="bi bi-key-fill"></i>
+                                    <span>Reset Password</span>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+else if (ActiveTab == "holidays")
+{
+    <!-- Company Holidays Table -->
+    <div class="gym-card mb-4">
+        <div class="gym-card-header d-flex justify-content-between align-items-center">
+            <span>Holidays &amp; Scheduled Closures</span>
+            <span class="badge bg-light text-dark border">@Holidays.Count Days</span>
+        </div>
+        <div class="table-responsive">
+            <table class="gym-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Holiday Title</th>
+                        <th>Branch Scope</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (Holidays.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="3" class="text-center py-4 text-secondary">No holidays defined yet.</td>
+                        </tr>
+                    }
+                    @foreach (var h in Holidays)
+                    {
+                        <tr>
+                            <td class="fw-bold">@h.HolidayDate.ToString("yyyy-MM-dd")</td>
+                            <td>@h.Title</td>
+                            <td>@(h.Branch != null ? h.Branch.BranchName : "All Branches")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Modal: Add Branch -->
+@if (ShowBranchModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Add Branch Location</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowBranchModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Branch Name</label>
+                        <input class="form-control" @bind="NewBranch.BranchName" placeholder="e.g. Downtown Central" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Branch Code</label>
+                        <input class="form-control" @bind="NewBranch.BranchCode" placeholder="e.g. DWT-01" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Address</label>
+                        <input class="form-control" @bind="NewBranch.Address" placeholder="Street, Township, City" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Phone Number</label>
+                        <input class="form-control" @bind="NewBranch.PhoneNumber" placeholder="09 123 456 789" />
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" @bind="NewBranch.IsActive" id="branchActive" />
+                        <label class="form-check-label small fw-bold" for="branchActive">Active Branch</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="() => ShowBranchModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm rounded-pill px-3" @onclick="SaveBranch">Save Branch</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Add Staff User -->
+@if (ShowUserModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Add Staff Account</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowUserModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Username</label>
+                        <input class="form-control" @bind="NewUser.Username" placeholder="e.g. ko.zaw" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Full Name</label>
+                        <input class="form-control" @bind="NewUser.FullName" placeholder="e.g. U Zaw Min" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Assign Branch</label>
+                        <select class="form-select" @bind="NewUser.BranchId">
+                            <option value="">-- Select Branch --</option>
+                            @foreach (var b in Branches)
+                            {
+                                <option value="@b.Id">@b.BranchName (@b.BranchCode)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Role</label>
+                        <select class="form-select" @bind="NewUser.Role">
+                            <option value="@UserRole.FrontDeskStaff">Front Desk Staff</option>
+                            <option value="@UserRole.BranchManager">Branch Manager</option>
+                            <option value="@UserRole.TenantAdmin">Tenant Admin</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="() => ShowUserModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm rounded-pill px-3" @onclick="SaveUser">Create Staff</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Add Holiday -->
+@if (ShowHolidayModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">Add Holiday or Closure</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowHolidayModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Holiday Title</label>
+                        <input class="form-control" @bind="HolidayTitle" placeholder="e.g. Thingyan Water Festival" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Date</label>
+                        <input type="date" class="form-control" @bind="HolidayDate" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="() => ShowHolidayModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm rounded-pill px-3" @onclick="SaveHoliday">Save Holiday</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Reset Staff Password (HQ Admin) -->
+@if (ShowResetPasswordModal && SelectedStaffForReset != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-light">
+                    <h5 class="modal-title fs-6 fw-bold d-flex align-items-center gap-2">
+                        <i class="bi bi-key-fill text-success"></i>
+                        <span>Reset Staff Account Password</span>
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseResetPasswordModal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Staff Info Summary Card -->
+                    <div class="p-3 mb-3 rounded-3 bg-light border">
+                        <div class="d-flex justify-content-between align-items-center mb-1.5">
+                            <span class="text-secondary small">Staff Member:</span>
+                            <span class="fw-bold text-dark">@SelectedStaffForReset.FullName</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-1.5">
+                            <span class="text-secondary small">Username:</span>
+                            <span class="badge bg-secondary bg-opacity-25 text-dark border">@SelectedStaffForReset.Username</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-1.5">
+                            <span class="text-secondary small">Assigned Branch:</span>
+                            <span class="text-dark small fw-semibold">@SelectedStaffForReset.BranchName</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="text-secondary small">Role:</span>
+                            <span class="badge bg-dark">@SelectedStaffForReset.Role</span>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label class="form-label small fw-bold mb-0">New Password</label>
+                            <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none text-success" @onclick="GenerateRandomStaffPassword">
+                                <i class="bi bi-shuffle me-1"></i>Generate Password
+                            </button>
+                        </div>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light text-muted">
+                                <i class="bi bi-lock"></i>
+                            </span>
+                            <input type="@(ShowStaffPassword ? "text" : "password")" 
+                                   class="form-control" 
+                                   placeholder="Enter new password (min 6 chars)" 
+                                   @bind="NewStaffPassword" />
+                            <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowStaffPassword = !ShowStaffPassword">
+                                <i class="bi @(ShowStaffPassword ? "bi-eye-slash" : "bi-eye")"></i>
+                            </button>
+                        </div>
+                        <div class="form-text small text-muted">
+                            Staff can log in with this temporary password and update it anytime.
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(ResetStatusMessage))
+                    {
+                        <div class="alert @(ResetStatusSuccess ? "alert-success" : "alert-danger") py-2 small mb-0 d-flex align-items-center gap-2">
+                            <i class="bi @(ResetStatusSuccess ? "bi-check-circle-fill" : "bi-exclamation-triangle-fill")"></i>
+                            <span>@ResetStatusMessage</span>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="CloseResetPasswordModal">Close</button>
+                    <button type="button" class="btn btn-success btn-sm rounded-pill px-3" 
+                            @onclick="SubmitResetStaffPassword" 
+                            disabled="@(string.IsNullOrWhiteSpace(NewStaffPassword) || IsResettingPassword)">
+                        @if (IsResettingPassword)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Updating...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-check-circle me-1"></i>
+                            <span>Update Password</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string ActiveTab = "branches";
+
+    private List<BranchDto> Branches = new();
+    private List<StaffUserDto> StaffUsers = new();
+    private List<Holiday> Holidays = new();
+
+    private bool ShowBranchModal = false;
+    private BranchDto NewBranch = new();
+
+    private bool ShowUserModal = false;
+    private StaffUserDto NewUser = new();
+
+    private bool ShowHolidayModal = false;
+    private string HolidayTitle = string.Empty;
+    private DateTime HolidayDate = DateTime.Today;
+
+    // Reset Password Modal State
+    private bool ShowResetPasswordModal = false;
+    private StaffUserDto? SelectedStaffForReset = null;
+    private string NewStaffPassword = string.Empty;
+    private bool ShowStaffPassword = false;
+    private bool IsResettingPassword = false;
+    private string ResetStatusMessage = string.Empty;
+    private bool ResetStatusSuccess = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        Branches = await OrgService.GetBranchesAsync();
+        StaffUsers = await OrgService.GetStaffUsersAsync();
+        Holidays = await OrgService.GetHolidaysAsync();
+    }
+
+    private void OpenResetPasswordModal(StaffUserDto staff)
+    {
+        SelectedStaffForReset = staff;
+        NewStaffPassword = $"GymStaff@{Random.Shared.Next(1000, 9999)}";
+        ShowStaffPassword = true;
+        ResetStatusMessage = string.Empty;
+        ResetStatusSuccess = false;
+        IsResettingPassword = false;
+        ShowResetPasswordModal = true;
+    }
+
+    private void CloseResetPasswordModal()
+    {
+        ShowResetPasswordModal = false;
+        SelectedStaffForReset = null;
+        NewStaffPassword = string.Empty;
+        ResetStatusMessage = string.Empty;
+    }
+
+    private void GenerateRandomStaffPassword()
+    {
+        var prefixes = new[] { "TitanPass", "StaffGym", "PowerFlex", "GymUser" };
+        var prefix = prefixes[Random.Shared.Next(prefixes.Length)];
+        NewStaffPassword = $"{prefix}#{Random.Shared.Next(1000, 9999)}";
+        ShowStaffPassword = true;
+    }
+
+    private async Task SubmitResetStaffPassword()
+    {
+        if (SelectedStaffForReset == null || string.IsNullOrWhiteSpace(NewStaffPassword)) return;
+
+        IsResettingPassword = true;
+        ResetStatusMessage = string.Empty;
+
+        try
+        {
+            var success = await OrgService.ResetStaffPasswordAsync(SelectedStaffForReset.Id, NewStaffPassword.Trim());
+            if (success)
+            {
+                ResetStatusSuccess = true;
+                ResetStatusMessage = $"Password for '{SelectedStaffForReset.Username}' was successfully updated!";
+            }
+            else
+            {
+                ResetStatusSuccess = false;
+                ResetStatusMessage = "Failed to update password. Staff account not found.";
+            }
+        }
+        catch (Exception ex)
+        {
+            ResetStatusSuccess = false;
+            ResetStatusMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            IsResettingPassword = false;
+        }
+    }
+
+    private void OpenAddBranchModal()
+    {
+        NewBranch = new BranchDto { IsActive = true };
+        ShowBranchModal = true;
+    }
+
+    private async Task SaveBranch()
+    {
+        if (string.IsNullOrWhiteSpace(NewBranch.BranchName)) return;
+        await OrgService.CreateBranchAsync(NewBranch);
+        ShowBranchModal = false;
+        await LoadData();
+    }
+
+    private void OpenAddUserModal()
+    {
+        NewUser = new StaffUserDto { Role = UserRole.FrontDeskStaff };
+        ShowUserModal = true;
+    }
+
+    private async Task SaveUser()
+    {
+        if (string.IsNullOrWhiteSpace(NewUser.Username)) return;
+        await OrgService.CreateStaffUserAsync(NewUser, "admin123");
+        ShowUserModal = false;
+        await LoadData();
+    }
+
+    private void OpenAddHolidayModal()
+    {
+        HolidayTitle = string.Empty;
+        HolidayDate = DateTime.Today;
+        ShowHolidayModal = true;
+    }
+
+    private async Task SaveHoliday()
+    {
+        if (string.IsNullOrWhiteSpace(HolidayTitle)) return;
+        await OrgService.CreateHolidayAsync(HolidayTitle, HolidayDate, null, null);
+        ShowHolidayModal = false;
+        await LoadData();
+    }
+}

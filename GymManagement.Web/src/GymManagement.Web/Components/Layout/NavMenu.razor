@@ -1,0 +1,247 @@
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Enums
+@inject ICurrentUserService CurrentUser
+@inject ITenantService TenantService
+@inject IOrganizationService OrgService
+@inject IInventoryService InventoryService
+@inject IFinancialService FinancialService
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="mini-sidebar-container">
+    <!-- Slim Icon-Only Navigation List with Tooltips on Hover (Matching Screenshot) -->
+    <ul class="mini-nav-list">
+        @if (CurrentUser.IsSuperAdmin)
+        {
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/" Match="NavLinkMatch.All" title="Tenants Management">
+                    <i class="bi bi-buildings"></i>
+                    <span class="nav-tooltip">Tenants Management</span>
+                </NavLink>
+            </li>
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/superadmin/billing" title="Billing & Invoices">
+                    <i class="bi bi-receipt-cutoff"></i>
+                    <span class="nav-tooltip">Billing &amp; Invoices</span>
+                </NavLink>
+            </li>
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/superadmin/permissions" title="Tenant Subscriptions">
+                    <i class="bi bi-shield-lock-fill"></i>
+                    <span class="nav-tooltip">Tenant Subscriptions</span>
+                </NavLink>
+            </li>
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/superadmin/audit-logs" title="System Audit Logs">
+                    <i class="bi bi-clock-history"></i>
+                    <span class="nav-tooltip">System Audit Logs</span>
+                </NavLink>
+            </li>
+        }
+        else if (CurrentUser.IsTenantAdmin)
+        {
+            <!-- 1. Dashboard (bi-grid-fill) -->
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/admin/dashboard" title="Dashboard Overview">
+                    <i class="bi bi-grid-fill"></i>
+                    <span class="nav-tooltip">Dashboard Overview</span>
+                </NavLink>
+            </li>
+
+            <!-- 2. Daily Revenue & Collections (bi-cash-stack) -->
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/admin/daily-revenue" title="Daily Revenue & Branch Collections">
+                    <i class="bi bi-cash-stack"></i>
+                    @if (PendingAdjustmentsCount > 0)
+                    {
+                        <span class="mini-nav-badge" style="background-color: #e17055;"></span>
+                    }
+                    <span class="nav-tooltip">Daily Revenue &amp; Approvals</span>
+                </NavLink>
+            </li>
+
+            <!-- 3. Organization & Branches (bi-buildings) -->
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/admin/organization" title="Branches & Staff">
+                    <i class="bi bi-buildings"></i>
+                    <span class="nav-tooltip">Branches &amp; Staff</span>
+                </NavLink>
+            </li>
+
+            <!-- 3. Plans & Analytics (bi-graph-up) -->
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/admin/plans" title="Membership Plans & Pricing">
+                    <i class="bi bi-graph-up"></i>
+                    <span class="nav-tooltip">Plans &amp; Analytics</span>
+                </NavLink>
+            </li>
+
+            <!-- 4. Inventory & Stock (bi-box-seam-fill) -->
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/admin/inventory" title="Inventory & Stock Management">
+                    <i class="bi bi-box-seam-fill"></i>
+                    @if (PendingStockRequestsCount > 0)
+                    {
+                        <span class="mini-nav-badge"></span>
+                    }
+                    <span class="nav-tooltip">Inventory &amp; Stock Hub</span>
+                </NavLink>
+            </li>
+
+            <!-- 5. Activity & Audit Logs (bi-clock-history) -->
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/admin/audit-logs" title="Activity & Audit Logs">
+                    <i class="bi bi-clock-history"></i>
+                    <span class="nav-tooltip">Activity &amp; Audit Logs</span>
+                </NavLink>
+            </li>
+        }
+        else
+        {
+            <!-- Front Desk Staff Menu -->
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/staff/checkin" title="Member Check-In">
+                    <i class="bi bi-calendar-check-fill"></i>
+                    <span class="nav-tooltip">Member Check-In</span>
+                </NavLink>
+            </li>
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/staff/members" title="Members Directory">
+                    <i class="bi bi-people-fill"></i>
+                    <span class="nav-tooltip">Members Directory</span>
+                </NavLink>
+            </li>
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/staff/alerts" title="Due Period Alerts">
+                    <i class="bi bi-bell-fill"></i>
+                    <span class="nav-tooltip">Due Period Alerts</span>
+                </NavLink>
+            </li>
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/staff/pos" title="POS Point of Sale">
+                    <i class="bi bi-cart3"></i>
+                    <span class="nav-tooltip">Stock Sales (POS)</span>
+                </NavLink>
+            </li>
+            <li class="mini-nav-item">
+                <NavLink class="mini-nav-link" href="/staff/stock-requests" title="Stock Requests">
+                    <i class="bi bi-arrow-left-right"></i>
+                    <span class="nav-tooltip">Stock Requests</span>
+                </NavLink>
+            </li>
+        }
+    </ul>
+</div>
+
+@code {
+    private bool IsInventoryEnabled = true;
+    private string? CurrentTenantName;
+    private string? CurrentBranchName;
+    private int PendingStockRequestsCount = 0;
+    private int PendingAdjustmentsCount = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        EnsureDefaultContext();
+        Navigation.LocationChanged += HandleLocationChanged;
+        await CheckEntitlements();
+    }
+
+    private void EnsureDefaultContext()
+    {
+        if (CurrentUser.Role == null)
+        {
+            var path = Navigation.ToBaseRelativePath(Navigation.Uri).ToLowerInvariant();
+            if (path.StartsWith("superadmin") || path == "")
+            {
+                CurrentUser.SetContext(null, null, 1, "superadmin", UserRole.SuperAdmin);
+            }
+            else if (path.StartsWith("staff"))
+            {
+                CurrentUser.SetContext(1, 1, 3, "staff_downtown", UserRole.FrontDeskStaff);
+            }
+            else
+            {
+                CurrentUser.SetContext(1, 1, 2, "titanadmin", UserRole.TenantAdmin);
+            }
+        }
+    }
+
+    private async void HandleLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        await CheckEntitlements();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await CheckEntitlements();
+    }
+
+    private async Task CheckEntitlements()
+    {
+        if (CurrentUser.TenantId.HasValue)
+        {
+            var tenant = await TenantService.GetTenantByIdAsync(CurrentUser.TenantId.Value);
+            if (tenant != null)
+            {
+                CurrentTenantName = tenant.CompanyName;
+                IsInventoryEnabled = tenant.InventoryModuleEnabled;
+            }
+
+            if (CurrentUser.BranchId.HasValue)
+            {
+                var branches = await OrgService.GetBranchesAsync();
+                var b = branches.FirstOrDefault(x => x.Id == CurrentUser.BranchId.Value);
+                if (b != null) CurrentBranchName = b.BranchName;
+            }
+
+            if (CurrentUser.IsTenantAdmin)
+            {
+                try
+                {
+                    PendingAdjustmentsCount = await FinancialService.GetPendingAdjustmentsCountAsync();
+                }
+                catch
+                {
+                    PendingAdjustmentsCount = 0;
+                }
+            }
+            else
+            {
+                PendingAdjustmentsCount = 0;
+            }
+
+            if (CurrentUser.IsTenantAdmin && IsInventoryEnabled)
+            {
+                try
+                {
+                    var reqs = await InventoryService.GetStockRequestsAsync();
+                    PendingStockRequestsCount = reqs.Count(r => r.Status == StockRequestStatus.Pending);
+                }
+                catch
+                {
+                    PendingStockRequestsCount = 0;
+                }
+            }
+            else
+            {
+                PendingStockRequestsCount = 0;
+            }
+        }
+        else
+        {
+            CurrentTenantName = null;
+            CurrentBranchName = null;
+            IsInventoryEnabled = true;
+            PendingStockRequestsCount = 0;
+            PendingAdjustmentsCount = 0;
+        }
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= HandleLocationChanged;
+    }
+}

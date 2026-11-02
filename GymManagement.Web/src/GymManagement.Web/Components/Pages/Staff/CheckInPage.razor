@@ -1,0 +1,329 @@
+@page "/staff/checkin"
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Entities
+@using GymManagement.Domain.Enums
+@inject IMembershipService MemberService
+@inject IOrganizationService OrgService
+@inject ICurrentUserService CurrentUser
+
+<div class="page-header-row">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+        <div class="page-title mb-0">Check-In Kiosk</div>
+        @if (Branches.Count > 1)
+        {
+            <div class="d-flex align-items-center gap-2 bg-white px-2.5 py-1 rounded-2 border">
+                <span class="text-secondary small fw-bold"><i class="bi bi-geo-alt text-primary me-1"></i>Kiosk Location:</span>
+                <select class="form-select form-select-sm border-0 py-0 fw-bold" style="width: auto; cursor: pointer;" @bind="CurrentKioskBranchId">
+                    @foreach (var b in Branches)
+                    {
+                        <option value="@b.Id">@b.BranchName</option>
+                    }
+                </select>
+            </div>
+        }
+    </div>
+    <span class="badge-clean badge-active">
+        <i class="bi bi-geo-alt-fill text-success"></i> GPS Geofencing Active
+    </span>
+</div>
+
+<div class="row g-4 mb-4">
+    <!-- Live Geofence Monitoring & Simulator -->
+    <div class="col-lg-6">
+
+
+        <!-- Verification Feedback Card -->
+        @if (LastResult != null)
+        {
+            <div class="gym-card p-4 @(LastResult.Success ? (LastResult.WarningExpiringSoon ? "border-warning" : "border-success") : "border-danger")"
+                 style="border-width: 2px;">
+                <div class="d-flex gap-4 align-items-center">
+                    <img src="@(LastResult.Member?.PhotoUrl ?? "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80")" 
+                         class="rounded-circle border" 
+                         style="width: 90px; height: 90px; object-fit: cover;" 
+                         alt="Member Photo" />
+                    <div class="flex-grow-1">
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                            <h4 class="mb-0">@(LastResult.Member?.FullName ?? "Unknown Member")</h4>
+                            <span class="badge bg-light text-dark border">@(LastResult.Member?.MemberCode ?? "N/A")</span>
+                        </div>
+                        <div class="text-secondary mb-2">
+                            <span>Phone: @(LastResult.Member?.PhoneNumber ?? "—")</span> &bull; 
+                            <span>Home: @(LastResult.Member?.HomeBranchName ?? "Main Branch")</span>
+                        </div>
+                        <div>
+                            @if (LastResult.Success)
+                            {
+                                @if (LastResult.IsCheckOut)
+                                {
+                                    <span class="badge bg-info p-2 fs-6">
+                                        <i class="bi bi-box-arrow-right me-1"></i> CHECKED OUT
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-success p-2 fs-6">
+                                        <i class="bi bi-check-circle-fill me-1"></i> ACCESS GRANTED
+                                    </span>
+                                    <span class="badge bg-light text-dark border p-2 fs-6 ms-2">
+                                        @LastResult.PlanName (@LastResult.DaysRemaining Days Left)
+                                    </span>
+                                }
+
+                                @if (LastResult.WarningExpiringSoon)
+                                {
+                                    <div class="alert alert-warning py-1 px-2 mt-2 mb-0 small">
+                                        <i class="bi bi-exclamation-triangle-fill me-1"></i> Warning: Membership expires in @LastResult.DaysRemaining days!
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <span class="badge bg-danger p-2 fs-6">
+                                    <i class="bi bi-x-circle-fill me-1"></i> ACCESS DENIED
+                                </span>
+                                <div class="text-danger small mt-2">@LastResult.Message</div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- Mobile GPS Geofencing Live Simulator Card -->
+        <div class="gym-card p-3 mb-4 bg-light border border-primary border-opacity-25 rounded-3">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="rounded-circle bg-primary bg-opacity-10 text-primary p-1.5 fs-6">
+                        <i class="bi bi-phone"></i>
+                    </span>
+                    <span class="fw-bold small text-dark">Mobile GPS Geofence Test Simulator</span>
+                </div>
+                <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;">
+                    REST API Ready
+                </span>
+            </div>
+            <div class="text-secondary small mb-3" style="font-size: 0.78rem;">
+                Member Mobile App (iOS / Android) မှ GPS Lat/Long ဖြင့် အလိုအလျောက် Check-In / Check-Out ဝင်ရောက်ခြင်းနှင့် Workout Duration တွက်ချက်ခြင်းကို စမ်းသပ်နိုင်ပါသည်-
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-secondary mb-1">Select Member</label>
+                    <select class="form-select form-select-sm" @bind="SimulatedMemberCode">
+                        @foreach (var m in AvailableMembers)
+                        {
+                            <option value="@m.MemberCode">@m.FullName (@m.MemberCode)</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label small fw-semibold text-secondary mb-1">Simulated GPS Location</label>
+                    <select class="form-select form-select-sm" @bind="SimulatedGpsLocation">
+                        <option value="inside">Inside Gym (Lat: 16.7794, Lon: 96.1557) - 0m</option>
+                        <option value="outside">Outside Gym (Lat: 16.8500, Lon: 96.2000) - 8.5km Away</option>
+                    </select>
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-primary btn-sm flex-fill d-inline-flex align-items-center justify-content-center gap-1.5" @onclick="SimulateEnterGeofence">
+                    <i class="bi bi-geo-alt-fill"></i>
+                    <span>Simulate Enter Gym (Auto Check-In)</span>
+                </button>
+                <button class="btn btn-outline-success btn-sm flex-fill d-inline-flex align-items-center justify-content-center gap-1.5" @onclick="SimulateExitGeofence">
+                    <i class="bi bi-box-arrow-right"></i>
+                    <span>Simulate Exit Gym (Auto Check-Out)</span>
+                </button>
+            </div>
+            @if (GeofenceSimResult != null)
+            {
+                <div class="alert @(GeofenceSimResult.Success ? "alert-success" : "alert-danger") py-2 px-3 small mt-2 mb-0 d-flex align-items-center justify-content-between">
+                    <div>
+                        <strong>@(GeofenceSimResult.Success ? "✓ " : "✗ ")</strong>@GeofenceSimResult.Message
+                    </div>
+                    @if (GeofenceSimResult.WorkoutDurationMinutes.HasValue)
+                    {
+                        <span class="badge bg-success text-white">@GeofenceSimResult.FormattedDuration</span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Live Attendance Log (Today) -->
+    <div class="col-lg-6">
+        <div class="gym-card h-100">
+            <div class="gym-card-header d-flex justify-content-between align-items-center">
+                <span>Today's Live Check-Ins &amp; Check-Outs</span>
+                <span class="badge bg-primary">@TodayLogs.Count Total</span>
+            </div>
+            <div class="table-responsive">
+                <table class="gym-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Member &amp; Method</th>
+                            <th>Check-Out &amp; Duration</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (TodayLogs.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="4" class="text-center py-4 text-secondary">No check-in activity yet today.</td>
+                            </tr>
+                        }
+                        @foreach (var log in TodayLogs)
+                        {
+                            <tr>
+                                <td class="fw-bold">@log.CheckInTime.ToString("hh:mm tt")</td>
+                                <td>
+                                    <div class="fw-semibold text-dark">@log.Member?.FullName</div>
+                                    <div class="d-flex align-items-center gap-1 mt-0.5">
+                                        <code>@log.Member?.MemberCode</code>
+                                        @if (log.Method == CheckInMethod.GeofenceAuto)
+                                        {
+                                            <span class="badge bg-primary bg-opacity-15 text-primary border border-primary border-opacity-25" style="font-size: 0.65rem;" title="Automatic GPS Geofence Check-In">
+                                                <i class="bi bi-geo-alt-fill me-0.5"></i>GPS Auto
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-light text-secondary border" style="font-size: 0.65rem;">
+                                                <i class="bi bi-upc-scan me-0.5"></i>Scan
+                                            </span>
+                                        }
+                                    </div>
+                                </td>
+                                <td>
+                                    @if (log.CheckOutTime.HasValue)
+                                    {
+                                        <div>
+                                            <span class="text-secondary small fw-semibold">@log.CheckOutTime.Value.ToString("hh:mm tt")</span>
+                                            <div class="mt-0.5">
+                                                <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-50" style="font-size: 0.72rem;">
+                                                    <i class="bi bi-stopwatch me-1"></i>@FormatDuration(log.DurationMinutes)
+                                                </span>
+                                            </div>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="badge bg-warning bg-opacity-20 text-dark border border-warning" style="font-size: 0.7rem;">
+                                                <i class="bi bi-hourglass-split me-0.5"></i>In Gym
+                                            </span>
+                                            <button class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size: 0.75rem;" @onclick="() => ManualCheckOut(log.Id)">
+                                                Check Out
+                                            </button>
+                                        </div>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="badge-clean @(log.Status == CheckInStatus.Accepted ? "badge-active" : "badge-expired")">
+                                        @log.Status
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string ScanInput = string.Empty;
+    private CheckInResultDto? LastResult;
+    private List<MemberCheckIn> TodayLogs = new();
+    private List<BranchDto> Branches = new();
+    private List<MemberDto> AvailableMembers = new();
+    private int CurrentKioskBranchId = 1;
+
+    // Simulation fields
+    private string SimulatedMemberCode = string.Empty;
+    private string SimulatedGpsLocation = "inside";
+    private GeofenceCheckInResultDto? GeofenceSimResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Branches = await OrgService.GetBranchesAsync();
+        if (CurrentUser.BranchId.HasValue && Branches.Any(b => b.Id == CurrentUser.BranchId.Value))
+        {
+            CurrentKioskBranchId = CurrentUser.BranchId.Value;
+        }
+        else if (Branches.Count > 0)
+        {
+            CurrentKioskBranchId = Branches[0].Id;
+        }
+
+        AvailableMembers = await MemberService.GetMembersAsync();
+        if (AvailableMembers.Any())
+        {
+            SimulatedMemberCode = AvailableMembers[0].MemberCode;
+        }
+
+        await LoadLogs();
+    }
+
+    private async Task LoadLogs()
+    {
+        TodayLogs = await MemberService.GetTodayCheckInsAsync();
+    }
+
+    private async Task SubmitScan()
+    {
+        if (string.IsNullOrWhiteSpace(ScanInput)) return;
+
+        LastResult = await MemberService.ProcessCheckInAsync(ScanInput, CurrentKioskBranchId);
+        ScanInput = string.Empty;
+        await LoadLogs();
+    }
+
+    private async Task ManualCheckOut(int checkInId)
+    {
+        await MemberService.ProcessCheckOutAsync(checkInId);
+        await LoadLogs();
+    }
+
+    private async Task SimulateEnterGeofence()
+    {
+        if (string.IsNullOrWhiteSpace(SimulatedMemberCode)) return;
+
+        var selectedBranch = Branches.FirstOrDefault(b => b.Id == CurrentKioskBranchId) ?? Branches.FirstOrDefault();
+        double lat = selectedBranch?.Latitude ?? 16.7794;
+        double lon = selectedBranch?.Longitude ?? 96.1557;
+
+        if (SimulatedGpsLocation == "outside")
+        {
+            lat += 0.08; // ~8.8 km away
+            lon += 0.08;
+        }
+
+        GeofenceSimResult = await MemberService.ProcessGeofenceCheckInAsync(SimulatedMemberCode, lat, lon, CurrentKioskBranchId);
+        await LoadLogs();
+    }
+
+    private async Task SimulateExitGeofence()
+    {
+        if (string.IsNullOrWhiteSpace(SimulatedMemberCode)) return;
+
+        var selectedBranch = Branches.FirstOrDefault(b => b.Id == CurrentKioskBranchId) ?? Branches.FirstOrDefault();
+        double lat = (selectedBranch?.Latitude ?? 16.7794) + 0.08;
+        double lon = (selectedBranch?.Longitude ?? 96.1557) + 0.08;
+
+        GeofenceSimResult = await MemberService.ProcessGeofenceCheckOutAsync(SimulatedMemberCode, lat, lon, CurrentKioskBranchId);
+        await LoadLogs();
+    }
+
+    private string FormatDuration(int? mins)
+    {
+        if (!mins.HasValue) return "—";
+        int h = mins.Value / 60;
+        int m = mins.Value % 60;
+        return h > 0 ? $"{h}h {m}m" : $"{m} mins";
+    }
+}

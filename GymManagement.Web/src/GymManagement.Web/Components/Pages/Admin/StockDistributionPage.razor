@@ -1,0 +1,9 @@
+@page "/admin/stock-distribution"
+@inject NavigationManager Navigation
+
+@code {
+    protected override void OnInitialized()
+    {
+        Navigation.NavigateTo("/admin/inventory");
+    }
+}

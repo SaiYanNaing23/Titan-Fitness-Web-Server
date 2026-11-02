@@ -1,0 +1,1397 @@
+@page "/admin/inventory"
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Entities
+@using GymManagement.Domain.Enums
+@inject IInventoryService InventoryService
+@inject IOrganizationService OrgService
+@inject ITenantService TenantService
+@inject ICurrentUserService CurrentUser
+
+<div class="page-header-row">
+    <div class="page-title">
+        <i class="bi bi-box-seam me-2 text-primary"></i>Inventory &amp; Stock Hub
+    </div>
+    @if (!IsModuleDisabled)
+    {
+        <div class="d-flex gap-2">
+            @if (ActiveTab == "STOCK")
+            {
+                <button class="btn btn-outline-primary btn-sm" @onclick="OpenPromotionModal">
+                    <i class="bi bi-tag me-1"></i> New Promotion
+                </button>
+                <button class="btn btn-primary btn-sm" @onclick="OpenAddProductModal">
+                    <i class="bi bi-plus-lg me-1"></i> Add Product
+                </button>
+            }
+            else if (ActiveTab == "DISTRIBUTION")
+            {
+                <button class="btn btn-primary btn-sm" @onclick="OpenDispatchModal">
+                    <i class="bi bi-truck me-1"></i> Dispatch Stock to Branch
+                </button>
+            }
+        </div>
+    }
+</div>
+
+@if (IsModuleDisabled)
+{
+    <div class="gym-card p-5 text-center shadow-sm border-0 my-4 bg-white rounded-3">
+        <div class="mb-3 text-secondary" style="font-size: 3.5rem;">
+            <i class="bi bi-lock-fill text-muted"></i>
+        </div>
+        <h4 class="fw-bold text-dark mb-2">Inventory Module is Deactivated</h4>
+        <p class="text-muted mx-auto mb-4" style="max-width: 520px;">
+            The Inventory &amp; Stock Hub module is currently deactivated for your gym tenant subscription by the Super Administrator. Please contact your system administrator to enable this feature.
+        </p>
+        <div>
+            <a href="/admin/dashboard" class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-arrow-left me-1"></i> Return to Dashboard
+            </a>
+        </div>
+    </div>
+}
+else
+{
+<!-- Unified 3-Tab Hub Card -->
+<div class="gym-card mb-4">
+    <div class="card-header bg-transparent border-bottom px-4 pt-3 pb-0">
+        <ul class="nav nav-tabs border-0 gap-2">
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold @(ActiveTab == "STOCK" ? "active" : "")" 
+                        @onclick='() => ActiveTab = "STOCK"'>
+                    <i class="bi bi-boxes me-2"></i>Stock Control &amp; Pricing
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold @(ActiveTab == "PNL" ? "active" : "")" 
+                        @onclick='() => ActiveTab = "PNL"'>
+                    <i class="bi bi-graph-up-arrow me-2"></i>Profit &amp; Loss (P&amp;L) Ledger
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold position-relative @(ActiveTab == "DISTRIBUTION" ? "active" : "")" 
+                        @onclick='() => ActiveTab = "DISTRIBUTION"'>
+                    <i class="bi bi-truck me-2"></i>Stock Distribution &amp; Tracker
+                    @if (PendingRequestsCount > 0)
+                    {
+                        <span class="badge bg-danger text-white rounded-pill ms-2" title="@PendingRequestsCount Pending Branch Stock Requests">
+                            <i class="bi bi-bell-fill me-1"></i>@PendingRequestsCount New Req@(PendingRequestsCount > 1 ? "s" : "")
+                        </span>
+                    }
+                    else if (ActiveTransitCount > 0)
+                    {
+                        <span class="badge bg-info text-dark rounded-pill ms-2">@ActiveTransitCount In Transit</span>
+                    }
+                </button>
+            </li>
+        </ul>
+    </div>
+
+    <div class="card-body p-4">
+        @if (ActiveTab == "STOCK")
+        {
+            <!-- TAB 1: Stock Control & Price Management -->
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="fw-bold mb-0 text-dark">Product Catalog &amp; Branch Stock Allocations</h6>
+                <span class="badge bg-light text-muted border">@Products.Count Products Total</span>
+            </div>
+
+            <!-- Search & Filter Toolbar (Text Search + Category Dropdown) -->
+            <div class="row g-2 mb-3 align-items-center">
+                <div class="col-md-5 col-sm-6">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-light text-muted border-end-0">
+                            <i class="bi bi-search"></i>
+                        </span>
+                        <input type="text" class="form-control border-start-0" 
+                               placeholder="Search product name or barcode..." 
+                               @bind="SearchText" 
+                               @bind:event="oninput" />
+                        @if (!string.IsNullOrEmpty(SearchText))
+                        {
+                            <button class="btn btn-outline-secondary" type="button" @onclick="() => SearchText = string.Empty">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        }
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <select class="form-select form-select-sm" @bind="SelectedCategory">
+                        <option value="">All Categories</option>
+                        @foreach (var cat in Categories)
+                        {
+                            <option value="@cat">@cat</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-4 col-sm-12 text-md-end text-muted small">
+                    Showing <strong>@FilteredProducts.Count</strong> of @Products.Count products
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="gym-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 110px;">Barcode</th>
+                            <th style="min-width: 200px; max-width: 250px;">Product Name</th>
+                            <th style="width: 120px;">Category</th>
+                            <th style="width: 115px;">Cost Price</th>
+                            <th style="width: 115px;">Sale Price</th>
+                            <th style="width: 105px;">Promo Price</th>
+                            <th style="min-width: 170px;">Branches</th>
+                            <th class="text-center" style="min-width: 120px;">Total Stock</th>
+                            <th class="text-end" style="width: 110px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!FilteredProducts.Any())
+                        {
+                            <tr>
+                                <td colspan="9" class="text-center py-4 text-muted">
+                                    <i class="bi bi-search me-1"></i> No products matching search criteria.
+                                </td>
+                            </tr>
+                        }
+                        @foreach (var p in FilteredProducts)
+                        {
+                            <tr>
+                                <td><span class="barcode-pill">@p.Barcode</span></td>
+                                <td style="max-width: 250px;">
+                                    <div class="product-title-clamp" title="@p.ProductName">
+                                        @p.ProductName
+                                    </div>
+                                </td>
+                                <td><span class="cat-pill">@p.CategoryName</span></td>
+                                <td><span class="price-cell">@p.CostPrice.ToString("N0") <span class="price-curr">MMK</span></span></td>
+                                <td><span class="price-cell price-bold">@p.SalePrice.ToString("N0") <span class="price-curr">MMK</span></span></td>
+                                <td>
+                                    @if (p.PromoPrice.HasValue)
+                                    {
+                                        <span class="badge bg-danger py-1 px-1.5" style="font-size: 0.74rem;">@p.PromoPrice.Value.ToString("N0") MMK</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted small">—</span>
+                                    }
+                                </td>
+                                <td>
+                                    @if (p.BranchStocks.Any(b => b.QuantityOnHand > 0))
+                                    {
+                                        <div class="d-flex flex-wrap gap-1 align-items-center">
+                                            @foreach (var b in p.BranchStocks.Where(b => b.QuantityOnHand > 0))
+                                            {
+                                                <span class="branch-tag" title="@b.BranchName: @b.QuantityOnHand">
+                                                    <span class="branch-tag-name">@GetShortBranchName(b.BranchName)</span>
+                                                    <span class="branch-tag-qty">@b.QuantityOnHand</span>
+                                                </span>
+                                            }
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted small">—</span>
+                                    }
+                                </td>
+                                <td class="text-center">
+                                    @if (p.TotalStock == 0)
+                                    {
+                                        <span class="stock-pill stock-empty">0 @p.UnitOfMeasure</span>
+                                    }
+                                    else if (p.TotalStock <= p.LowStockAlertQuantity)
+                                    {
+                                        <span class="stock-pill stock-low" title="Low Stock Alert (<= @p.LowStockAlertQuantity)">
+                                            <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>@p.TotalStock @p.UnitOfMeasure
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="stock-pill stock-ok">@p.TotalStock @p.UnitOfMeasure</span>
+                                    }
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-outline-secondary btn-sm py-1 px-2.5" style="font-size: 0.78rem;" @onclick="() => OpenPriceChangeModal(p)">
+                                        Change Price
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (ActiveTab == "PNL")
+        {
+            <!-- TAB 2: Stock Profit & Loss Ledger -->
+            <div class="row g-3 mb-4">
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="stat-icon bg-success bg-opacity-10 text-success">
+                            <i class="bi bi-graph-up-arrow"></i>
+                        </div>
+                        <div>
+                            <div class="stat-val">@PnLList.Sum(p => p.GrossProfit).ToString("N0")</div>
+                            <div class="stat-label">Gross Profit</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+                            <i class="bi bi-cash"></i>
+                        </div>
+                        <div>
+                            <div class="stat-val">@PnLList.Sum(p => p.TotalSalesRevenue).ToString("N0")</div>
+                            <div class="stat-label">Sales Revenue</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="stat-icon bg-secondary bg-opacity-10 text-secondary">
+                            <i class="bi bi-bag"></i>
+                        </div>
+                        <div>
+                            <div class="stat-val">@PnLList.Sum(p => p.TotalCostOfGoodsSold).ToString("N0")</div>
+                            <div class="stat-label">Total COGS</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="stat-icon bg-info bg-opacity-10 text-info">
+                            <i class="bi bi-box-seam"></i>
+                        </div>
+                        <div>
+                            <div class="stat-val">@Products.Sum(p => p.TotalStock)</div>
+                            <div class="stat-label">Total Units In Stock</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search & Filter Toolbar for P&L Ledger -->
+            <div class="row g-2 mb-3 align-items-center">
+                <div class="col-md-5 col-sm-6">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-light text-muted border-end-0">
+                            <i class="bi bi-search"></i>
+                        </span>
+                        <input type="text" class="form-control border-start-0" 
+                               placeholder="Search ledger by product name..." 
+                               @bind="SearchText" 
+                               @bind:event="oninput" />
+                        @if (!string.IsNullOrEmpty(SearchText))
+                        {
+                            <button class="btn btn-outline-secondary" type="button" @onclick="() => SearchText = string.Empty">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        }
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <select class="form-select form-select-sm" @bind="SelectedCategory">
+                        <option value="">All Categories</option>
+                        @foreach (var cat in Categories)
+                        {
+                            <option value="@cat">@cat</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-4 col-sm-12 text-md-end text-muted small">
+                    Showing <strong>@FilteredPnLList.Count</strong> of @PnLList.Count products
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="gym-table">
+                    <thead>
+                        <tr>
+                            <th style="min-width: 200px; max-width: 250px;">Product</th>
+                            <th class="text-center" style="width: 100px;">Units Sold</th>
+                            <th style="min-width: 125px;">Sales Revenue</th>
+                            <th style="min-width: 125px;">COGS</th>
+                            <th style="min-width: 125px;">Gross Profit</th>
+                            <th class="text-center" style="width: 95px;">Margin %</th>
+                            <th style="min-width: 170px;">Branches</th>
+                            <th class="text-center" style="min-width: 110px;">Total Stock</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!FilteredPnLList.Any())
+                        {
+                            <tr>
+                                <td colspan="8" class="text-center py-4 text-muted">
+                                    <i class="bi bi-search me-1"></i> No ledger items matching search criteria.
+                                </td>
+                            </tr>
+                        }
+                        @foreach (var p in FilteredPnLList)
+                        {
+                            <tr>
+                                <td style="max-width: 250px;">
+                                    <div class="product-title-clamp" title="@p.ProductName">
+                                        @p.ProductName
+                                    </div>
+                                </td>
+                                <td class="text-center fw-semibold text-secondary" style="font-size: 0.84rem;">@p.UnitsSold</td>
+                                <td><span class="price-cell">@p.TotalSalesRevenue.ToString("N0") <span class="price-curr">MMK</span></span></td>
+                                <td><span class="price-cell">@p.TotalCostOfGoodsSold.ToString("N0") <span class="price-curr">MMK</span></span></td>
+                                <td>
+                                    <span class="price-cell fw-bold @(p.GrossProfit >= 0 ? "text-success" : "text-danger")">
+                                        @p.GrossProfit.ToString("N0") <span class="price-curr">MMK</span>
+                                    </span>
+                                </td>
+                                <td class="text-center">
+                                    <span class="stock-pill @(p.MarginPercent >= 0 ? "stock-ok" : "stock-empty")">@p.MarginPercent%</span>
+                                </td>
+                                <td>
+                                    @if (p.BranchStocks.Any(b => b.QuantityOnHand > 0))
+                                    {
+                                        <div class="d-flex flex-wrap gap-1 align-items-center">
+                                            @foreach (var b in p.BranchStocks.Where(b => b.QuantityOnHand > 0))
+                                            {
+                                                <span class="branch-tag" title="@b.BranchName: @b.QuantityOnHand">
+                                                    <span class="branch-tag-name">@GetShortBranchName(b.BranchName)</span>
+                                                    <span class="branch-tag-qty">@b.QuantityOnHand</span>
+                                                </span>
+                                            }
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted small">—</span>
+                                    }
+                                </td>
+                                <td class="text-center">
+                                    <span class="stock-pill @(p.CurrentStock == 0 ? "stock-empty" : p.CurrentStock <= 5 ? "stock-low" : "stock-ok")">
+                                        @p.CurrentStock
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (ActiveTab == "DISTRIBUTION")
+        {
+            <!-- TAB 3: HQ Stock Distribution & Live Tracker -->
+            @if (PendingRequestsCount > 0)
+            {
+                <div class="alert alert-warning border border-warning d-flex align-items-center justify-content-between p-3 mb-4 shadow-sm rounded-3">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="rounded-circle bg-warning bg-opacity-25 p-2 text-dark fs-4">
+                            <i class="bi bi-bell-fill text-warning"></i>
+                        </div>
+                        <div>
+                            <h6 class="mb-0 fw-bold text-dark">
+                                Branch Stock Requisition Alert: @PendingRequestsCount Requisition@(PendingRequestsCount > 1 ? "s" : "") Awaiting HQ Approval &amp; Dispatch
+                            </h6>
+                            <div class="text-secondary small mt-0.5">
+                                Branch centers have submitted stock requests from Central Warehouse (HQ). Review and click "Approve &amp; Dispatch" to fulfill.
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-warning btn-sm fw-bold px-3 py-1.5 shadow-sm text-dark" @onclick="() => DistributionFilter = StockRequestStatus.Pending">
+                        <i class="bi bi-eye me-1"></i>View Pending (@PendingRequestsCount)
+                    </button>
+                </div>
+            }
+
+            <div class="row g-3 mb-4">
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+                            <i class="bi bi-truck"></i>
+                        </div>
+                        <div>
+                            <div class="stat-val">@AllDispatches.Count</div>
+                            <div class="stat-label">Total Shipments &amp; Reqs</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card @(PendingRequestsCount > 0 ? "border-warning bg-warning bg-opacity-10" : "")">
+                        <div class="stat-icon @(PendingRequestsCount > 0 ? "bg-warning text-dark" : "bg-secondary bg-opacity-10 text-secondary")">
+                            <i class="bi bi-bell-fill"></i>
+                        </div>
+                        <div>
+                            <div class="stat-val @(PendingRequestsCount > 0 ? "text-danger fw-bold" : "")">@PendingRequestsCount</div>
+                            <div class="stat-label">Pending Branch Requests</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="stat-icon bg-info bg-opacity-10 text-info">
+                            <i class="bi bi-arrow-repeat"></i>
+                        </div>
+                        <div>
+                            <div class="stat-val">@AllDispatches.Count(d => d.Status == StockRequestStatus.InTransit)</div>
+                            <div class="stat-label">In Transit (Active)</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="stat-card">
+                        <div class="stat-icon bg-success bg-opacity-10 text-success">
+                            <i class="bi bi-check2-circle"></i>
+                        </div>
+                        <div>
+                            <div class="stat-val">@AllDispatches.Count(d => d.Status == StockRequestStatus.Received)</div>
+                            <div class="stat-label">Delivered &amp; Received</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fw-bold text-dark">Branch Dispatch Tracking Pipeline</span>
+                    <span class="badge bg-light text-dark border">@FilteredDispatches.Count Shipments</span>
+                </div>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn @(DistributionFilter == null ? "btn-dark" : "btn-light border")" @onclick="() => DistributionFilter = null">
+                        All (@AllDispatches.Count)
+                    </button>
+                    <button class="btn @(DistributionFilter == StockRequestStatus.Pending ? "btn-warning fw-bold text-dark" : "btn-light border")" @onclick="() => DistributionFilter = StockRequestStatus.Pending">
+                        Pending Requests (@PendingRequestsCount)
+                    </button>
+                    <button class="btn @(DistributionFilter == StockRequestStatus.InTransit ? "btn-dark" : "btn-light border")" @onclick="() => DistributionFilter = StockRequestStatus.InTransit">
+                        In Transit (@ActiveTransitCount)
+                    </button>
+                    <button class="btn @(DistributionFilter == StockRequestStatus.Received ? "btn-dark" : "btn-light border")" @onclick="() => DistributionFilter = StockRequestStatus.Received">
+                        Delivered (@AllDispatches.Count(d => d.Status == StockRequestStatus.Received))
+                    </button>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="gym-table">
+                    <thead>
+                        <tr>
+                            <th>Tracking / Req #</th>
+                            <th>Date &amp; Time</th>
+                            <th>Origin (Source)</th>
+                            <th>Destination Branch</th>
+                            <th>Items &amp; Given Qty</th>
+                            <th style="min-width: 260px;">Shipment Status Tracker</th>
+                            <th class="text-end">Status / Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!FilteredDispatches.Any())
+                        {
+                            <tr>
+                                <td colspan="7" class="text-center py-5 text-muted">
+                                    <i class="bi bi-box2 fs-2 d-block mb-2 text-secondary"></i>
+                                    No stock distribution shipments found matching this filter.
+                                </td>
+                            </tr>
+                        }
+                        @foreach (var d in FilteredDispatches)
+                        {
+                            <tr>
+                                <td>
+                                    <code class="fw-bold">@d.RequestNumber</code>
+                                    @if (!string.IsNullOrEmpty(d.Notes))
+                                    {
+                                        <div class="text-muted small" style="font-size: 0.75rem;">@d.Notes</div>
+                                    }
+                                </td>
+                                <td>
+                                    <div class="text-dark small fw-semibold">@d.CreatedAt.ToString("yyyy-MM-dd")</div>
+                                    <div class="text-muted" style="font-size: 0.72rem;">@d.CreatedAt.ToString("HH:mm") UTC</div>
+                                </td>
+                                <td>
+                                    <span class="badge bg-light text-primary border">
+                                        <i class="bi bi-building me-1"></i>@(d.FulfillingBranch?.BranchName ?? "Central Warehouse (HQ)")
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-light text-danger border">
+                                        <i class="bi bi-geo-alt-fill me-1"></i>@(d.RequestingBranch?.BranchName ?? "Branch")
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-column gap-1.5">
+                                        @foreach (var item in d.Items)
+                                        {
+                                            var hasAdjustment = item.ApprovedQuantity != item.RequestedQuantity && d.Status != StockRequestStatus.Pending;
+                                            <div class="p-1.5 rounded-2 @(hasAdjustment ? "bg-warning bg-opacity-10 border border-warning border-opacity-50" : "")">
+                                                <div class="fw-bold text-dark small">@(item.Product?.ProductName ?? $"Product #{item.ProductId}")</div>
+                                                <div class="d-flex align-items-center flex-wrap gap-1 mt-1">
+                                                    @if (d.Status == StockRequestStatus.Pending)
+                                                    {
+                                                        <span class="badge bg-light text-primary border" style="font-size: 0.74rem;">
+                                                            <span class="text-secondary fw-normal">Branch Requested:</span> <strong>@item.RequestedQuantity pcs</strong>
+                                                        </span>
+                                                    }
+                                                    else if (hasAdjustment)
+                                                    {
+                                                        <span class="badge bg-light text-secondary border text-decoration-line-through" style="font-size: 0.72rem;" title="Branch Requested Quantity">
+                                                            Req: @item.RequestedQuantity pcs
+                                                        </span>
+                                                        <i class="bi bi-arrow-right text-muted" style="font-size: 0.7rem;"></i>
+                                                        <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-50 fw-bold" style="font-size: 0.74rem;" title="Actual HQ Dispatched / Given Quantity">
+                                                            Given: @item.ApprovedQuantity pcs
+                                                        </span>
+                                                        <span class="badge bg-warning bg-opacity-25 text-dark fw-bold" style="font-size: 0.68rem;" title="Adjusted Quantity Difference">
+                                                            (@(item.ApprovedQuantity < item.RequestedQuantity ? $"-{item.RequestedQuantity - item.ApprovedQuantity}" : $"+{item.ApprovedQuantity - item.RequestedQuantity}") pcs)
+                                                        </span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="badge bg-light text-primary border" style="font-size: 0.74rem;">
+                                                            <span class="text-secondary fw-normal">Given:</span> <strong>@item.ApprovedQuantity pcs</strong>
+                                                        </span>
+                                                        <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size: 0.68rem;">
+                                                            <i class="bi bi-check2"></i> Full (Req: @item.RequestedQuantity)
+                                                        </span>
+                                                    }
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                </td>
+                                <td>
+                                    <!-- Visual Progress Stepper Tracker -->
+                                    <div class="d-flex align-items-center gap-2">
+                                        <!-- Step 1: Requested / Dispatched -->
+                                        <div class="d-flex flex-column align-items-center" style="width: 70px;">
+                                            <div class="rounded-circle @(d.Status == StockRequestStatus.Pending ? "bg-warning text-dark" : "bg-success text-white") d-flex align-items-center justify-content-center" style="width: 22px; height: 22px; font-size: 0.7rem;">
+                                                <i class="bi @(d.Status == StockRequestStatus.Pending ? "bi-hourglass-split" : "bi-check")"></i>
+                                            </div>
+                                            <span style="font-size: 0.65rem;" class="@(d.Status == StockRequestStatus.Pending ? "text-warning" : "text-success") fw-bold mt-0.5">
+                                                @(d.Status == StockRequestStatus.Pending ? "Requested" : "Dispatched")
+                                            </span>
+                                        </div>
+                                        <div class="flex-grow-1 border-top @(d.Status == StockRequestStatus.Received ? "border-success border-2" : (d.Status == StockRequestStatus.InTransit ? "border-info border-2" : "border-warning border-2"))" style="margin-top: -10px;"></div>
+                                        
+                                        <!-- Step 2: In Transit / Awaiting Dispatch -->
+                                        <div class="d-flex flex-column align-items-center" style="width: 70px;">
+                                            <div class="rounded-circle @(d.Status == StockRequestStatus.Received ? "bg-success text-white" : (d.Status == StockRequestStatus.InTransit ? "bg-info text-dark" : "bg-light border text-muted")) d-flex align-items-center justify-content-center" style="width: 22px; height: 22px; font-size: 0.7rem;">
+                                                <i class="bi bi-truck"></i>
+                                            </div>
+                                            <span style="font-size: 0.65rem;" class="@(d.Status == StockRequestStatus.Received ? "text-success fw-bold" : (d.Status == StockRequestStatus.InTransit ? "text-info fw-bold" : "text-muted")) mt-0.5">In Transit</span>
+                                        </div>
+                                        <div class="flex-grow-1 border-top @(d.Status == StockRequestStatus.Received ? "border-success border-2" : "border-secondary border-opacity-25")" style="margin-top: -10px;"></div>
+                                        
+                                        <!-- Step 3: Delivered -->
+                                        <div class="d-flex flex-column align-items-center" style="width: 70px;">
+                                            <div class="rounded-circle @(d.Status == StockRequestStatus.Received ? "bg-success text-white" : "bg-light border text-muted") d-flex align-items-center justify-content-center" style="width: 22px; height: 22px; font-size: 0.7rem;">
+                                                <i class="bi @(d.Status == StockRequestStatus.Received ? "bi-check2-all" : "bi-box-seam")"></i>
+                                            </div>
+                                            <span style="font-size: 0.65rem;" class="@(d.Status == StockRequestStatus.Received ? "text-success fw-bold" : "text-muted") mt-0.5">
+                                                @(d.Status == StockRequestStatus.Received ? "Delivered" : "Not Arrived")
+                                            </span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="text-end">
+                                    @if (d.Status == StockRequestStatus.Pending)
+                                    {
+                                        <button class="btn btn-primary btn-sm py-1 px-3 shadow-sm rounded-pill d-inline-flex align-items-center gap-1.5" 
+                                                @onclick="() => OpenApproveModal(d)"
+                                                title="Review and adjust quantities before dispatching">
+                                            <i class="bi bi-sliders2"></i>
+                                            <span>Review &amp; Dispatch</span>
+                                        </button>
+                                    }
+                                    else if (d.Status == StockRequestStatus.InTransit)
+                                    {
+                                        <span class="badge bg-warning bg-opacity-20 text-dark border border-warning py-1.5 px-3 rounded-pill fw-semibold" 
+                                              title="Shipment has been dispatched from HQ. Waiting for branch to receive and stock in.">
+                                            <i class="bi bi-truck text-warning me-1"></i>In Transit (မရောက်သေးပါ)
+                                        </span>
+                                    }
+                                    else if (d.Status == StockRequestStatus.Received)
+                                    {
+                                        <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-50 py-1.5 px-3 rounded-pill fw-semibold">
+                                            <i class="bi bi-check2-all me-1"></i>Delivered &amp; Received
+                                        </span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+}
+
+<!-- Modal: Change Price -->
+@if (ShowPriceModal && SelectedProduct != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Price Change</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowPriceModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Product</label>
+                        <input class="form-control" value="@SelectedProduct.ProductName" disabled />
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">New Sale Price (MMK)</label>
+                            <input type="number" class="form-control" @bind="NewSalePrice" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">New Cost Price (MMK)</label>
+                            <input type="number" class="form-control" @bind="NewCostPrice" />
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Reason for Change</label>
+                        <input class="form-control" @bind="PriceChangeReason" placeholder="e.g. Supplier price update" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => ShowPriceModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm" @onclick="SavePriceChange">Apply Price Change</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Add Product -->
+@if (ShowAddModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">New Inventory Product</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowAddModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Product Name</label>
+                        <input class="form-control" @bind="NewProduct.ProductName" placeholder="e.g. BCAA Amino Powder" />
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Barcode</label>
+                            <input class="form-control" @bind="NewProduct.Barcode" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Unit of Measure</label>
+                            <input class="form-control" @bind="NewProduct.UnitOfMeasure" placeholder="tub / can / pcs" />
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Cost Price (MMK)</label>
+                            <input type="number" class="form-control" @bind="NewProduct.CostPrice" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Sale Price (MMK)</label>
+                            <input type="number" class="form-control" @bind="NewProduct.SalePrice" />
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Initial Stock Quantity</label>
+                        <input type="number" class="form-control" @bind="NewProduct.BranchStock" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => ShowAddModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm" @onclick="SaveNewProduct">Save Product</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: New Promotion -->
+@if (ShowPromoModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create Product Promotion</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowPromoModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Promotion Title</label>
+                        <input class="form-control" @bind="PromoTitle" placeholder="e.g. Weekend Flash Sale" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Select Product</label>
+                        <select class="form-select" @bind="PromoProductId">
+                            @foreach (var p in Products)
+                            {
+                                <option value="@p.Id">@p.ProductName (Regular: @p.SalePrice.ToString("N0") MMK)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Promotional Sale Price (MMK)</label>
+                        <input type="number" class="form-control" @bind="PromoDiscountPrice" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => ShowPromoModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm" @onclick="SavePromotion">Apply Promotion</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Dispatch Stock to Branch -->
+@if (ShowDispatchModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-truck me-2 text-primary"></i>HQ Stock Dispatch to Branch
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowDispatchModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Source Branch (Origin)</label>
+                            <select class="form-select" @bind="SourceBranchId">
+                                @foreach (var b in Branches)
+                                {
+                                    <option value="@b.Id">@b.BranchName</option>
+                                }
+                            </select>
+                            <div class="text-muted small mt-1">Stock will be deducted from this branch immediately upon dispatch.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Destination Branch (Target)</label>
+                            <select class="form-select" @bind="DestBranchId">
+                                @foreach (var b in Branches.Where(b => b.Id != SourceBranchId))
+                                {
+                                    <option value="@b.Id">@b.BranchName</option>
+                                }
+                            </select>
+                            <div class="text-muted small mt-1">Stock will be added to this branch once confirmed received.</div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Select Product to Distribute</label>
+                        <select class="form-select" @bind="SelectedProductId">
+                            @foreach (var p in Products)
+                            {
+                                var avail = p.BranchStocks.FirstOrDefault(b => b.BranchId == SourceBranchId)?.QuantityOnHand ?? 0;
+                                <option value="@p.Id">@p.ProductName (Available at Origin: @avail)</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Quantity to Dispatch</label>
+                            <input type="number" class="form-control" @bind="DispatchQty" min="1" max="@MaxAvailableQty" />
+                            <div class="small text-muted mt-1">Max available at source: <strong>@MaxAvailableQty</strong> units</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Dispatch Notes / Reference</label>
+                            <input type="text" class="form-control" @bind="DispatchNotes" placeholder="e.g. Weekly branch stock replenishment" />
+                        </div>
+                    </div>
+
+                    @if (ErrorMessage != null)
+                    {
+                        <div class="alert alert-danger py-2 small mb-0">
+                            <i class="bi bi-exclamation-triangle me-1"></i>@ErrorMessage
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => ShowDispatchModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm" @onclick="SubmitDispatch" disabled="@(DispatchQty <= 0 || DispatchQty > MaxAvailableQty)">
+                        <i class="bi bi-send-check me-1"></i> Confirm &amp; Dispatch Stock
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Review & Adjust Stock Requisition before Dispatch -->
+@if (ShowApproveModal && SelectedRequestToApprove != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.55); backdrop-filter: blur(2px);" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0 rounded-4 overflow-hidden">
+                <div class="modal-header bg-light py-3 border-bottom d-flex align-items-center justify-content-between">
+                    <h5 class="modal-title fs-6 fw-bold text-dark d-flex align-items-center gap-2 mb-0">
+                        <i class="bi bi-sliders2 text-primary"></i>
+                        Review &amp; Adjust Requisition (@SelectedRequestToApprove.RequestNumber)
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowApproveModal = false"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <div class="bg-light p-3 rounded-3 mb-3 border">
+                        <div class="row g-2 small">
+                            <div class="col-sm-4">
+                                <span class="text-secondary">Destination Branch:</span>
+                                <div class="fw-bold text-dark"><i class="bi bi-geo-alt-fill text-danger me-1"></i>@(SelectedRequestToApprove.RequestingBranch?.BranchName ?? "Branch")</div>
+                            </div>
+                            <div class="col-sm-4">
+                                <span class="text-secondary">Requested Date:</span>
+                                <div class="fw-bold text-dark">@SelectedRequestToApprove.CreatedAt.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                            </div>
+                            <div class="col-sm-4">
+                                <span class="text-secondary">Requested By:</span>
+                                <div class="fw-bold text-dark">@(SelectedRequestToApprove.RequestedBy ?? "Branch Staff")</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info py-2 px-3 small d-flex align-items-center gap-2 mb-3">
+                        <i class="bi bi-info-circle-fill text-info fs-5 flex-shrink-0"></i>
+                        <div>
+                            Branch မှ မှာယူထားသော အရေအတွက် (Requested Qty) ကို Central HQ လက်ကျန်ပေါ်မူတည်၍ ပေးပို့မည့် အရေအတွက် (Approved Qty) အား manual adjust ပြင်ဆင်သတ်မှတ်ပေးနိုင်ပါသည်။
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(ApproveErrorMessage))
+                    {
+                        <div class="alert alert-danger py-2 small mb-3">
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i>@ApproveErrorMessage
+                        </div>
+                    }
+
+                    <div class="table-responsive border rounded-3 mb-3">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="table-light small">
+                                <tr>
+                                    <th class="ps-3 py-2">Product Name</th>
+                                    <th class="text-center py-2">HQ Available Stock</th>
+                                    <th class="text-center py-2">Branch Requested</th>
+                                    <th class="text-center py-2" style="width: 170px;">Approved / Dispatch Qty</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var it in SelectedRequestToApprove.Items)
+                                {
+                                    var hqAvail = GetHqStockForItem(it.ProductId);
+                                    var currApproved = EditItemQuantities.TryGetValue(it.Id, out var q) ? q : it.RequestedQuantity;
+                                    var isAdjusted = currApproved != it.RequestedQuantity;
+
+                                    <tr>
+                                        <td class="ps-3">
+                                            <div class="fw-bold text-dark">@(it.Product?.ProductName ?? $"Product #{it.ProductId}")</div>
+                                            <div class="text-muted small" style="font-size: 0.72rem;">@(it.Product?.Category?.CategoryName ?? "General")</div>
+                                        </td>
+                                        <td class="text-center">
+                                            <span class="badge @(hqAvail > 0 ? "bg-success bg-opacity-10 text-success border border-success border-opacity-50" : "bg-danger bg-opacity-10 text-danger border border-danger border-opacity-50") px-2.5 py-1">
+                                                @hqAvail pcs
+                                            </span>
+                                        </td>
+                                        <td class="text-center">
+                                            <span class="badge bg-light text-dark border px-2.5 py-1 fw-bold">
+                                                @it.RequestedQuantity pcs
+                                            </span>
+                                        </td>
+                                        <td class="text-center">
+                                            <div class="d-flex flex-column align-items-center">
+                                                <div class="input-group input-group-sm" style="max-width: 130px;">
+                                                    <input type="number" 
+                                                           class="form-control text-center fw-bold @(isAdjusted ? "border-warning text-primary" : "")" 
+                                                           min="0" 
+                                                           max="@hqAvail" 
+                                                           value="@currApproved"
+                                                           @onchange="(ChangeEventArgs e) => UpdateApprovedQty(it.Id, e.Value)" />
+                                                    <span class="input-group-text">pcs</span>
+                                                </div>
+                                                @if (isAdjusted)
+                                                {
+                                                    <span class="badge bg-warning bg-opacity-25 text-dark mt-1" style="font-size: 0.68rem;">
+                                                        Adjusted (@(currApproved < it.RequestedQuantity ? $"-{it.RequestedQuantity - currApproved}" : $"+{currApproved - it.RequestedQuantity}"))
+                                                    </span>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold text-secondary">HQ Allocation Note / Remark (Optional)</label>
+                        <input type="text" class="form-control form-control-sm" @bind="ApproveNotes" placeholder="e.g. Adjusted to 5 pcs due to warehouse stock rationing across branches" />
+                    </div>
+                </div>
+                <div class="modal-footer bg-light py-2.5 border-top">
+                    <button class="btn btn-secondary btn-sm px-3" @onclick="() => ShowApproveModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm px-4 fw-bold shadow-sm d-inline-flex align-items-center gap-1.5" @onclick="ConfirmApproveAndDispatch">
+                        <i class="bi bi-send-check"></i>
+                        <span>Confirm Approval &amp; Dispatch</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string ActiveTab = "STOCK";
+
+    private string SearchText = string.Empty;
+    private string SelectedCategory = string.Empty;
+
+    private List<ProductDto> Products = new();
+    private List<StockPnLDto> PnLList = new();
+    private List<BranchDto> Branches = new();
+    private List<StockRequest> AllDispatches = new();
+
+    private IEnumerable<string> Categories => Products
+        .Select(p => p.CategoryName)
+        .Where(c => !string.IsNullOrWhiteSpace(c))
+        .Select(c => c!)
+        .Distinct()
+        .OrderBy(c => c);
+
+    private List<ProductDto> FilteredProducts
+    {
+        get
+        {
+            var query = Products.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(SearchText))
+            {
+                var term = SearchText.Trim();
+                query = query.Where(p =>
+                    (!string.IsNullOrEmpty(p.ProductName) && p.ProductName.Contains(term, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrEmpty(p.Barcode) && p.Barcode.Contains(term, StringComparison.OrdinalIgnoreCase)));
+            }
+            if (!string.IsNullOrWhiteSpace(SelectedCategory))
+            {
+                query = query.Where(p => string.Equals(p.CategoryName, SelectedCategory, StringComparison.OrdinalIgnoreCase));
+            }
+            return query.ToList();
+        }
+    }
+
+    private List<StockPnLDto> FilteredPnLList
+    {
+        get
+        {
+            var query = PnLList.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(SearchText))
+            {
+                var term = SearchText.Trim();
+                query = query.Where(p =>
+                    !string.IsNullOrEmpty(p.ProductName) && p.ProductName.Contains(term, StringComparison.OrdinalIgnoreCase));
+            }
+            if (!string.IsNullOrWhiteSpace(SelectedCategory))
+            {
+                var matchingProductIds = Products
+                    .Where(p => string.Equals(p.CategoryName, SelectedCategory, StringComparison.OrdinalIgnoreCase))
+                    .Select(p => p.Id)
+                    .ToHashSet();
+                query = query.Where(p => matchingProductIds.Contains(p.ProductId));
+            }
+            return query.ToList();
+        }
+    }
+
+    private StockRequestStatus? DistributionFilter = null;
+    private List<StockRequest> FilteredDispatches => DistributionFilter.HasValue
+        ? AllDispatches.Where(d => d.Status == DistributionFilter.Value).ToList()
+        : AllDispatches;
+
+    private int ActiveTransitCount => AllDispatches.Count(d => d.Status == StockRequestStatus.InTransit);
+    private int PendingRequestsCount => AllDispatches.Count(d => d.Status == StockRequestStatus.Pending);
+
+    private bool ShowPriceModal = false;
+    private ProductDto? SelectedProduct;
+    private decimal NewSalePrice;
+    private decimal NewCostPrice;
+    private string PriceChangeReason = string.Empty;
+
+    private bool ShowAddModal = false;
+    private ProductDto NewProduct = new() { CostPrice = 10000, SalePrice = 15000, BranchStock = 10, UnitOfMeasure = "pcs" };
+
+    private bool ShowPromoModal = false;
+    private string PromoTitle = string.Empty;
+    private int PromoProductId;
+    private decimal PromoDiscountPrice;
+
+    private bool ShowDispatchModal = false;
+    private int SourceBranchId;
+    private int DestBranchId;
+    private int SelectedProductId;
+    private int DispatchQty = 1;
+    private string DispatchNotes = string.Empty;
+    private string? ErrorMessage;
+
+    private int MaxAvailableQty
+    {
+        get
+        {
+            var p = Products.FirstOrDefault(x => x.Id == SelectedProductId);
+            if (p == null) return 0;
+            return p.BranchStocks.FirstOrDefault(b => b.BranchId == SourceBranchId)?.QuantityOnHand ?? 0;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private bool IsModuleDisabled = false;
+
+    private async Task LoadData()
+    {
+        if (CurrentUser.TenantId.HasValue)
+        {
+            var tenant = await TenantService.GetTenantByIdAsync(CurrentUser.TenantId.Value);
+            if (tenant != null && !tenant.InventoryModuleEnabled)
+            {
+                IsModuleDisabled = true;
+                return;
+            }
+        }
+        IsModuleDisabled = false;
+
+        Branches = await OrgService.GetBranchesAsync();
+        Products = await InventoryService.GetProductsAsync();
+        PnLList = await InventoryService.GetStockPnLAsync();
+        AllDispatches = await InventoryService.GetStockRequestsAsync();
+
+        if (Products.Count > 0 && PromoProductId == 0)
+        {
+            PromoProductId = Products[0].Id;
+            PromoDiscountPrice = Products[0].SalePrice * 0.9m;
+        }
+
+        if (Branches.Count > 0 && SourceBranchId == 0)
+        {
+            SourceBranchId = Branches[0].Id;
+            DestBranchId = Branches.Count > 1 ? Branches[1].Id : Branches[0].Id;
+        }
+
+        if (Products.Count > 0 && SelectedProductId == 0)
+        {
+            SelectedProductId = Products[0].Id;
+        }
+    }
+
+    private string GetShortBranchName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "Branch";
+        var shortName = name.Replace("Titan ", "").Replace("Flex ", "").Trim();
+        return string.IsNullOrEmpty(shortName) ? name : shortName;
+    }
+
+    private int GetProductBranchQty(ProductDto p, int branchId) =>
+        p.BranchStocks.FirstOrDefault(b => b.BranchId == branchId)?.QuantityOnHand ?? 0;
+
+    private int GetPnLBranchQty(StockPnLDto p, int branchId) =>
+        p.BranchStocks.FirstOrDefault(b => b.BranchId == branchId)?.QuantityOnHand ?? 0;
+
+    private void OpenPriceChangeModal(ProductDto p)
+    {
+        SelectedProduct = p;
+        NewSalePrice = p.SalePrice;
+        NewCostPrice = p.CostPrice;
+        PriceChangeReason = "Market price update";
+        ShowPriceModal = true;
+    }
+
+    private async Task SavePriceChange()
+    {
+        if (SelectedProduct == null) return;
+        await InventoryService.UpdateProductPriceAsync(SelectedProduct.Id, NewSalePrice, NewCostPrice, PriceChangeReason);
+        ShowPriceModal = false;
+        await LoadData();
+    }
+
+    private void OpenAddProductModal()
+    {
+        NewProduct = new ProductDto { CostPrice = 10000, SalePrice = 15000, BranchStock = 10, UnitOfMeasure = "pcs" };
+        ShowAddModal = true;
+    }
+
+    private async Task SaveNewProduct()
+    {
+        if (string.IsNullOrWhiteSpace(NewProduct.ProductName)) return;
+        await InventoryService.CreateProductAsync(NewProduct);
+        ShowAddModal = false;
+        await LoadData();
+    }
+
+    private void OpenPromotionModal()
+    {
+        PromoTitle = "Special Member Promo";
+        ShowPromoModal = true;
+    }
+
+    private async Task SavePromotion()
+    {
+        if (PromoProductId <= 0 || PromoDiscountPrice <= 0) return;
+        await InventoryService.CreatePromotionAsync(PromoTitle, PromoProductId, PromoDiscountPrice, DateTime.UtcNow.AddDays(-1), DateTime.UtcNow.AddDays(14));
+        ShowPromoModal = false;
+        await LoadData();
+    }
+
+    private void OpenDispatchModal()
+    {
+        ErrorMessage = null;
+        DispatchQty = 1;
+        DispatchNotes = "Routine branch stock distribution";
+        if (Branches.Count > 0)
+        {
+            SourceBranchId = Branches[0].Id;
+            DestBranchId = Branches.Count > 1 ? Branches[1].Id : Branches[0].Id;
+        }
+        if (Products.Count > 0)
+        {
+            SelectedProductId = Products[0].Id;
+        }
+        ShowDispatchModal = true;
+    }
+
+    private async Task SubmitDispatch()
+    {
+        ErrorMessage = null;
+        if (SourceBranchId == DestBranchId)
+        {
+            ErrorMessage = "Source branch and Destination branch cannot be the same.";
+            return;
+        }
+
+        if (DispatchQty <= 0)
+        {
+            ErrorMessage = "Dispatch quantity must be greater than 0.";
+            return;
+        }
+
+        if (DispatchQty > MaxAvailableQty)
+        {
+            ErrorMessage = $"Cannot dispatch {DispatchQty} units. Only {MaxAvailableQty} units available at source branch.";
+            return;
+        }
+
+        var items = new List<(int productId, int qty)> { (SelectedProductId, DispatchQty) };
+        var senderName = CurrentUser.Username ?? "HQ Admin";
+
+        await InventoryService.DispatchStockFromHqAsync(SourceBranchId, DestBranchId, items, senderName, DispatchNotes);
+        ShowDispatchModal = false;
+        ActiveTab = "DISTRIBUTION";
+        await LoadData();
+    }
+
+    private bool ShowApproveModal = false;
+    private StockRequest? SelectedRequestToApprove;
+    private Dictionary<int, int> EditItemQuantities = new();
+    private string ApproveNotes = string.Empty;
+    private string? ApproveErrorMessage;
+
+    private void OpenApproveModal(StockRequest req)
+    {
+        SelectedRequestToApprove = req;
+        EditItemQuantities = req.Items.ToDictionary(i => i.Id, i => i.RequestedQuantity);
+        ApproveNotes = string.Empty;
+        ApproveErrorMessage = null;
+        ShowApproveModal = true;
+    }
+
+    private void UpdateApprovedQty(int itemId, object? value)
+    {
+        if (int.TryParse(value?.ToString(), out var qty))
+        {
+            EditItemQuantities[itemId] = Math.Max(0, qty);
+        }
+    }
+
+    private int GetHqStockForItem(int productId)
+    {
+        int sourceId = SelectedRequestToApprove?.FulfillingBranchId ?? 1;
+        var prod = Products.FirstOrDefault(p => p.Id == productId);
+        if (prod == null) return 0;
+        return prod.BranchStocks.FirstOrDefault(b => b.BranchId == sourceId)?.QuantityOnHand ?? 0;
+    }
+
+    private async Task ConfirmApproveAndDispatch()
+    {
+        if (SelectedRequestToApprove == null) return;
+
+        ApproveErrorMessage = null;
+
+        // Validation against central warehouse available stock
+        foreach (var item in SelectedRequestToApprove.Items)
+        {
+            var qty = EditItemQuantities.TryGetValue(item.Id, out var q) ? q : item.RequestedQuantity;
+            if (qty < 0)
+            {
+                ApproveErrorMessage = "Approved quantity cannot be negative.";
+                return;
+            }
+
+            var available = GetHqStockForItem(item.ProductId);
+            if (qty > available)
+            {
+                var prodName = item.Product?.ProductName ?? "Product";
+                ApproveErrorMessage = $"Cannot approve {qty} units of '{prodName}'. Central HQ only has {available} units available.";
+                return;
+            }
+        }
+
+        var approver = CurrentUser.Username ?? "Central HQ Admin";
+        await InventoryService.ApproveStockRequestAsync(SelectedRequestToApprove.Id, approver, EditItemQuantities, ApproveNotes);
+        ShowApproveModal = false;
+        await LoadData();
+    }
+}
+
+<style>
+    /* Table Typography & Layout Harmony */
+    .gym-table th {
+        font-size: 0.73rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.05em !important;
+        color: #475569 !important;
+        text-transform: uppercase !important;
+        padding: 0.75rem 0.9rem !important;
+        white-space: nowrap !important;
+        vertical-align: middle !important;
+    }
+
+    .gym-table td {
+        font-size: 0.84rem !important;
+        color: #1e293b !important;
+        padding: 0.75rem 0.9rem !important;
+        vertical-align: middle !important;
+    }
+
+    /* Barcode badge */
+    .barcode-pill {
+        display: inline-block;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: #475569;
+        background-color: #f1f5f9;
+        border: 1px solid #cbd5e1;
+        padding: 2.5px 7px;
+        border-radius: 4px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+    }
+
+    /* Product Title */
+    .product-title-clamp {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.35;
+        max-height: 2.7em;
+        word-break: break-word;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #0f172a;
+    }
+
+    /* Category Pill */
+    .cat-pill {
+        display: inline-block;
+        font-size: 0.74rem;
+        font-weight: 500;
+        color: #334155;
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        padding: 2.5px 7.5px;
+        border-radius: 4px;
+        white-space: nowrap;
+    }
+
+    /* Prices */
+    .price-cell {
+        font-size: 0.84rem;
+        color: #1e293b;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+    }
+    .price-cell.price-bold {
+        font-weight: 700;
+        color: #0f172a;
+    }
+    .price-curr {
+        font-size: 0.72rem;
+        font-weight: 500;
+        color: #64748b;
+        margin-left: 2px;
+    }
+
+    /* Branches */
+    .branch-tag {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 4px;
+        background: #f1f5f9;
+        border: 1px solid #cbd5e1;
+        font-size: 0.74rem;
+        line-height: 1.2;
+        overflow: hidden;
+        white-space: nowrap;
+    }
+    .branch-tag-name {
+        padding: 2px 5.5px;
+        color: #475569;
+        background: #f8fafc;
+        border-right: 1px solid #cbd5e1;
+        font-weight: 500;
+    }
+    .branch-tag-qty {
+        padding: 2px 6.5px;
+        color: #0f766e;
+        background: #f0fdfa;
+        font-weight: 700;
+    }
+
+    /* Total Stock Pill */
+    .stock-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        padding: 3px 8px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        border-radius: 5px;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+    }
+    .stock-pill.stock-ok {
+        background-color: #ecfdf5 !important;
+        color: #065f46 !important;
+        border: 1px solid #a7f3d0;
+    }
+    .stock-pill.stock-low {
+        background-color: #fffbeb !important;
+        color: #92400e !important;
+        border: 1px solid #fde68a;
+    }
+    .stock-pill.stock-empty {
+        background-color: #fef2f2 !important;
+        color: #991b1b !important;
+        border: 1px solid #fecaca;
+    }
+</style>

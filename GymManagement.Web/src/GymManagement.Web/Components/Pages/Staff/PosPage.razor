@@ -1,0 +1,636 @@
+@page "/staff/pos"
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Enums
+@inject IInventoryService InventoryService
+@inject ITenantService TenantService
+@inject IFinancialService FinancialService
+@inject ICurrentUserService CurrentUser
+
+<div class="page-header-row mb-3">
+    <div class="page-title">Point of Sale (POS)</div>
+    <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm @(ActiveView == "SALE" ? "btn-primary text-white" : "btn-outline-secondary bg-white") shadow-sm fw-semibold" 
+                @onclick='() => SetActiveView("SALE")'>
+            <i class="bi bi-cart-plus me-1"></i>New Sale
+        </button>
+        <button class="btn btn-sm @(ActiveView == "HISTORY" ? "btn-primary text-white" : "btn-outline-secondary bg-white") shadow-sm fw-semibold position-relative" 
+                @onclick='() => SetActiveView("HISTORY")'>
+            <i class="bi bi-receipt me-1"></i>Today's Sales &amp; Audit
+            <span class="badge rounded-pill bg-light text-dark border ms-1">@TodaySales.Count</span>
+        </button>
+    </div>
+</div>
+
+@if (IsModuleDisabled)
+{
+    <div class="gym-card p-5 text-center shadow-sm border-0 my-4 bg-white rounded-3">
+        <div class="mb-3 text-secondary" style="font-size: 3.5rem;">
+            <i class="bi bi-cart-x text-muted"></i>
+        </div>
+        <h4 class="fw-bold text-dark mb-2">POS &amp; Inventory Module is Deactivated</h4>
+        <p class="text-muted mx-auto mb-4" style="max-width: 520px;">
+            Merchandise point-of-sale and inventory transactions are currently deactivated for this gym tenant subscription by SuperAdmin.
+        </p>
+    </div>
+}
+else if (ActiveView == "HISTORY")
+{
+<!-- Today Sales Table -->
+    <div class="gym-card border-0 shadow-sm overflow-hidden mb-4">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="font-size: 0.82rem;">
+                <thead class="bg-light text-muted text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.04em;">
+                    <tr>
+                        <th class="ps-3 py-2.5">Time</th>
+                        <th class="py-2.5">Invoice #</th>
+                        <th class="py-2.5">Customer</th>
+                        <th class="py-2.5">Items</th>
+                        <th class="py-2.5">Cashier</th>
+                        <th class="py-2.5">Method</th>
+                        <th class="text-end py-2.5">Total (MMK)</th>
+                        <th class="text-center py-2.5">Status</th>
+                        <th class="text-center pe-3 py-2.5">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (TodaySales.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="9" class="text-center py-4 text-muted">
+                                No POS sales recorded today at this branch.
+                            </td>
+                        </tr>
+                    }
+                    @foreach (var s in TodaySales)
+                    {
+                        <tr class="@(s.IsVoided ? "table-secondary opacity-75" : s.IsAdjustmentPending ? "table-warning bg-opacity-10" : "")">
+                            <td class="ps-3 py-2">@s.TransactionDate.ToString("hh:mm tt")</td>
+                            <td><span class="font-monospace fw-bold text-dark">@s.ReferenceNumber</span></td>
+                            <td>@s.CustomerOrMemberName</td>
+                            <td class="text-truncate" style="max-width: 250px;" title="@s.ItemDescription">@s.ItemDescription</td>
+                            <td class="text-secondary">@s.CashierOrStaff</td>
+                            <td><span class="badge bg-light text-dark border">@s.PaymentMethod</span></td>
+                            <td class="text-end fw-bold @(s.IsVoided ? "text-decoration-line-through text-muted" : "text-dark")">@s.Amount.ToString("N0")</td>
+                            <td class="text-center">
+                                @if (s.IsVoided)
+                                {
+                                    <span class="badge bg-danger py-1 px-2"><i class="bi bi-x-circle me-1"></i>Voided</span>
+                                }
+                                else if (s.IsAdjustmentPending)
+                                {
+                                    <span class="badge bg-warning text-dark py-1 px-2" title="@s.PendingAdjustmentReason">
+                                        <i class="bi bi-hourglass-split me-1"></i>HQ Approval Pending
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 py-1 px-2">
+                                        <i class="bi bi-lock-fill me-1"></i>Locked
+                                    </span>
+                                }
+                            </td>
+                            <td class="text-center pe-3">
+                                @if (!s.IsVoided && !s.IsAdjustmentPending)
+                                {
+                                    <button class="btn btn-outline-danger btn-sm py-0.5 px-2 bg-white" style="font-size: 0.72rem;" @onclick="() => OpenStaffActionModal(s)">
+                                        <i class="bi bi-pencil-square me-1"></i>Request Void / Edit
+                                    </button>
+                                }
+                                else if (s.IsAdjustmentPending)
+                                {
+                                    <span class="text-muted small" style="font-size: 0.72rem;">Pending Review</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row g-4">
+        <!-- Products Catalog Grid -->
+    <div class="col-lg-7">
+        <div class="gym-card mb-3">
+            <div class="gym-card-body py-2 px-3">
+                <div class="input-group">
+                    <span class="input-group-text bg-white border-end-0"><i class="bi bi-upc-scan text-primary"></i></span>
+                    <input class="form-control border-start-0" placeholder="Scan barcode or search product..." 
+                           @bind="SearchQuery" @bind:event="oninput" />
+                    @if (!string.IsNullOrWhiteSpace(SearchQuery))
+                    {
+                        <button class="btn btn-outline-secondary border-start-0 bg-white text-muted" type="button" @onclick="() => SearchQuery = string.Empty">
+                            <i class="bi bi-x"></i>
+                        </button>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Category Filter Pills -->
+        <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+            <button type="button" 
+                    class="btn btn-sm rounded-pill px-3 py-1 fw-semibold @(SelectedCategory == "ALL" ? "btn-primary text-white shadow-sm" : "btn-light border text-secondary")"
+                    @onclick='() => SelectedCategory = "ALL"'>
+                All Categories <span class="badge rounded-pill @(SelectedCategory == "ALL" ? "bg-white text-primary" : "bg-secondary bg-opacity-25 text-dark") ms-1">@Products.Count</span>
+            </button>
+            @foreach (var cat in AvailableCategories)
+            {
+                var catCount = Products.Count(p => (string.IsNullOrWhiteSpace(p.CategoryName) ? "General" : p.CategoryName.Trim()).Equals(cat, StringComparison.OrdinalIgnoreCase));
+                <button type="button" 
+                        class="btn btn-sm rounded-pill px-3 py-1 fw-semibold @(SelectedCategory == cat ? "btn-primary text-white shadow-sm" : "btn-light border text-secondary")"
+                        @onclick="() => SelectedCategory = cat">
+                    @cat <span class="badge rounded-pill @(SelectedCategory == cat ? "bg-white text-primary" : "bg-secondary bg-opacity-25 text-dark") ms-1">@catCount</span>
+                </button>
+            }
+        </div>
+
+        @if (!GroupedProducts.Any())
+        {
+            <div class="gym-card p-4 text-center text-muted">
+                <i class="bi bi-inbox fs-2 text-secondary opacity-50 d-block mb-2"></i>
+                <span>No products found matching your search or category filter.</span>
+            </div>
+        }
+        else
+        {
+            @foreach (var group in GroupedProducts)
+            {
+                <div class="category-group-section mb-4">
+                    <div class="d-flex align-items-center justify-content-between mb-2.5 pb-1 border-bottom">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 px-2.5 py-1.5 fw-bold" style="font-size: 0.78rem;">
+                                <i class="bi bi-tag-fill me-1"></i>@group.Key
+                            </span>
+                            <span class="text-muted small fw-medium">(@group.Count() item@(group.Count() > 1 ? "s" : ""))</span>
+                        </div>
+                    </div>
+
+                    <div class="row g-3">
+                        @foreach (var p in group)
+                        {
+                            <div class="col-md-4 col-sm-6">
+                                <div class="gym-card h-100 p-3 d-flex flex-column justify-content-between shadow-sm" style="cursor: pointer;"
+                                     @onclick="() => AddToCart(p)">
+                                    <div>
+                                        <div class="d-flex justify-content-between align-items-start mb-1">
+                                            <span class="badge bg-light text-dark border small">@p.CategoryName</span>
+                                            <span class="badge @(p.BranchStock <= p.LowStockAlertQuantity ? "bg-warning text-dark" : "bg-success bg-opacity-10 text-success")">
+                                                @p.BranchStock in stock
+                                            </span>
+                                        </div>
+                                        <div class="fw-bold mb-1" style="font-size: 0.95rem;">@p.ProductName</div>
+                                        <small class="text-secondary"><code>@p.Barcode</code></small>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-center mt-3 pt-2 border-top">
+                                        <span class="fw-bold text-primary">
+                                            @((p.PromoPrice ?? p.SalePrice).ToString("N0")) MMK
+                                        </span>
+                                        <button class="btn btn-outline-primary btn-sm py-0 px-2" title="Add to cart">
+                                            <i class="bi bi-plus-lg"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+    </div>
+
+    <!-- Sales Cart & Checkout -->
+    <div class="col-lg-5">
+        <div class="gym-card h-100 d-flex flex-column">
+            <div class="gym-card-header">
+                <span>Current Sale Cart</span>
+                <span class="badge bg-primary">@CartItems.Sum(c => c.Qty) Items</span>
+            </div>
+            <div class="gym-card-body flex-grow-1 p-0 overflow-y-auto" style="max-height: 400px;">
+                @if (CartItems.Count == 0)
+                {
+                    <div class="text-center py-5 text-secondary">
+                        <i class="bi bi-cart-x fs-1 d-block mb-2"></i>
+                        Cart is empty. Tap products to add.
+                    </div>
+                }
+                else
+                {
+                    <div class="list-group list-group-flush">
+                        @foreach (var item in CartItems)
+                        {
+                            <div class="list-group-item d-flex justify-content-between align-items-center py-3 px-3">
+                                <div style="max-width: 55%;">
+                                    <div class="fw-bold text-truncate">@item.Product.ProductName</div>
+                                    <small class="text-secondary">@item.Price.ToString("N0") MMK each</small>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <button class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => DecrementQty(item)">-</button>
+                                    <span class="fw-bold" style="min-width: 20px; text-align: center;">@item.Qty</span>
+                                    <button class="btn btn-sm btn-outline-secondary py-0 px-2" @onclick="() => IncrementQty(item)">+</button>
+                                    <span class="fw-bold ms-2" style="min-width: 70px; text-align: right;">
+                                        @((item.Qty * item.Price).ToString("N0"))
+                                    </span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <!-- Cart Footer & Tender -->
+            <div class="p-3 bg-light border-top">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-secondary">Total Payable:</span>
+                    <span class="fs-4 fw-bold text-primary">@CartTotal.ToString("N0") MMK</span>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Payment Method</label>
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="btnradio" id="btncash" checked="@(SelectedMethod == PaymentMethod.Cash)" @onchange="() => SelectedMethod = PaymentMethod.Cash">
+                        <label class="btn btn-outline-secondary btn-sm" for="btncash">Cash</label>
+
+                        <input type="radio" class="btn-check" name="btnradio" id="btnkpay" checked="@(SelectedMethod == PaymentMethod.KBZPay)" @onchange="() => SelectedMethod = PaymentMethod.KBZPay">
+                        <label class="btn btn-outline-secondary btn-sm" for="btnkpay">KBZPay</label>
+
+                        <input type="radio" class="btn-check" name="btnradio" id="btnwave" checked="@(SelectedMethod == PaymentMethod.WavePay)" @onchange="() => SelectedMethod = PaymentMethod.WavePay">
+                        <label class="btn btn-outline-secondary btn-sm" for="btnwave">WavePay</label>
+                    </div>
+                </div>
+                <button class="btn btn-success w-100 py-2 fw-bold" 
+                        disabled="@(CartItems.Count == 0)"
+                        @onclick="CompleteSale">
+                    <i class="bi bi-check2-circle me-1"></i> Complete Checkout (@CartTotal.ToString("N0") MMK)
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+}
+
+@if (ShowReceiptModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Sales Receipt</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowReceiptModal = false"></button>
+                </div>
+                <div class="modal-body text-center font-monospace small">
+                    <div class="fw-bold fs-6">TITAN FITNESS CLUB</div>
+                    <div class="text-secondary">Downtown HQ Branch</div>
+                    <hr class="my-2" />
+                    <div class="text-start">
+                        <div>Inv: @LastInvoiceNumber</div>
+                        <div>Date: @DateTime.UtcNow.ToString("yyyy-MM-dd hh:mm tt")</div>
+                        <div>Cashier: Ma Su Su</div>
+                    </div>
+                    <hr class="my-2" />
+                    <div class="text-start mb-2">
+                        @foreach (var it in LastSoldItems)
+                        {
+                            <div class="d-flex justify-content-between">
+                                <span>@it.Qty x @it.Name</span>
+                                <span>@((it.Qty * it.Price).ToString("N0"))</span>
+                            </div>
+                        }
+                    </div>
+                    <hr class="my-2" />
+                    <div class="d-flex justify-content-between fw-bold fs-6">
+                        <span>TOTAL:</span>
+                        <span>@LastPaidTotal.ToString("N0") MMK</span>
+                    </div>
+                    <div class="text-secondary small mt-1">Paid via @SelectedMethod</div>
+                    <div class="mt-3 text-secondary">Thank You & Happy Workout!</div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary btn-sm w-100" @onclick="() => ShowReceiptModal = false">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Staff Void / Edit Adjustment Request Modal -->
+@if (ShowStaffAdjustmentModal && SelectedSaleForAdjustment != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0 rounded-4">
+                <div class="modal-header border-bottom-0 pb-0 pt-3 px-4">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 36px; height: 36px; background: rgba(225, 112, 85, 0.15); color: #d63031;">
+                            <i class="bi bi-shield-lock-fill fs-5"></i>
+                        </div>
+                        <div>
+                            <h5 class="modal-title fw-bold text-dark fs-6 mb-0">Submit Void / Adjustment Request</h5>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseStaffActionModal"></button>
+                </div>
+
+                <div class="modal-body px-4 py-3">
+                    <div class="alert alert-warning py-2 px-3 small rounded-3 d-flex align-items-center gap-2 mb-3">
+                        <i class="bi bi-exclamation-triangle-fill fs-5 text-warning"></i>
+                        <div style="font-size: 0.75rem; line-height: 1.35;">
+                            <strong>Entry Locked:</strong> Financial transactions cannot be modified directly. Your request will be forwarded to Gym HQ for executive approval.
+                        </div>
+                    </div>
+
+                    <div class="p-2.5 rounded-3 bg-light border mb-3 small" style="font-size: 0.76rem;">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Customer:</span>
+                            <span class="fw-semibold text-dark">@SelectedSaleForAdjustment.CustomerOrMemberName</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Total Amount:</span>
+                            <span class="fw-bold text-dark font-monospace">@SelectedSaleForAdjustment.Amount.ToString("N0") MMK</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted">Payment:</span>
+                            <span class="fw-semibold text-dark">@SelectedSaleForAdjustment.PaymentMethod</span>
+                        </div>
+                    </div>
+
+                    <div class="mb-2.5">
+                        <label class="form-label small fw-bold text-dark mb-1">Adjustment Action</label>
+                        <select class="form-select form-select-sm" @bind="StaffActionType">
+                            <option value="1">Void &amp; Refund Entire Sale (Restores inventory to stock)</option>
+                            <option value="2">Correct Sale Total Amount</option>
+                            <option value="3">Correct Payment Method</option>
+                        </select>
+                    </div>
+
+                    @if (StaffActionType == 2)
+                    {
+                        <div class="mb-2.5">
+                            <label class="form-label small fw-bold text-dark mb-1">Proposed Correct Total (MMK)</label>
+                            <input type="number" class="form-control form-control-sm font-monospace fw-bold" @bind="StaffProposedAmount" />
+                        </div>
+                    }
+                    else if (StaffActionType == 3)
+                    {
+                        <div class="mb-2.5">
+                            <label class="form-label small fw-bold text-dark mb-1">Proposed Payment Method</label>
+                            <select class="form-select form-select-sm" @bind="StaffProposedMethod">
+                                <option value="1">Cash</option>
+                                <option value="3">KBZPay (Mobile)</option>
+                                <option value="4">WavePay (Mobile)</option>
+                                <option value="2">Credit / Debit Card</option>
+                                <option value="5">Bank Transfer</option>
+                            </select>
+                        </div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-dark mb-1">Reason / Explanation for HQ <span class="text-danger">*</span></label>
+                        <textarea class="form-control form-control-sm" rows="3" 
+                                  placeholder="State why this entry was erroneous (e.g. Accidental double scan, customer changed mind)..." 
+                                  @bind="StaffReason"></textarea>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(StaffActionErrorMessage))
+                    {
+                        <div class="alert alert-danger py-1.5 px-2.5 small mb-2">@StaffActionErrorMessage</div>
+                    }
+                </div>
+
+                <div class="modal-footer border-top-0 pt-0 pb-3 px-4 d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="CloseStaffActionModal">Cancel</button>
+                    <button type="button" class="btn btn-primary btn-sm rounded-pill px-3 fw-bold" 
+                            disabled="@(string.IsNullOrWhiteSpace(StaffReason) || IsSubmittingStaffAction)" 
+                            @onclick="SubmitStaffActionRequest">
+                        @if (IsSubmittingStaffAction)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Submitting...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-send me-1"></i>
+                            <span>Send for HQ Approval</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool IsModuleDisabled = false;
+    private string ActiveView = "SALE";
+    private List<ProductDto> Products = new();
+    private string SearchQuery = string.Empty;
+    private List<CartItem> CartItems = new();
+    private PaymentMethod SelectedMethod = PaymentMethod.Cash;
+
+    private bool ShowReceiptModal = false;
+    private string LastInvoiceNumber = string.Empty;
+    private decimal LastPaidTotal;
+    private List<(string Name, int Qty, decimal Price)> LastSoldItems = new();
+
+    private List<RevenueTransactionDto> TodaySales = new();
+
+    // Staff Adjustment Request Modal State
+    private bool ShowStaffAdjustmentModal = false;
+    private RevenueTransactionDto? SelectedSaleForAdjustment;
+    private int StaffActionType = 1; // 1 = Void, 2 = Amount, 3 = Method
+    private decimal StaffProposedAmount = 0;
+    private int StaffProposedMethod = 1;
+    private string StaffReason = string.Empty;
+    private string StaffActionErrorMessage = string.Empty;
+    private bool IsSubmittingStaffAction = false;
+
+    private string SelectedCategory = "ALL";
+
+    private List<string> AvailableCategories => Products
+        .Select(p => string.IsNullOrWhiteSpace(p.CategoryName) ? "General" : p.CategoryName.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(c => c)
+        .ToList();
+
+    private IEnumerable<ProductDto> FilteredProducts
+    {
+        get
+        {
+            var query = Products.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(SearchQuery))
+            {
+                query = query.Where(p => p.ProductName.Contains(SearchQuery, StringComparison.OrdinalIgnoreCase)
+                                      || p.Barcode.Contains(SearchQuery, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (SelectedCategory != "ALL")
+            {
+                query = query.Where(p => string.Equals(string.IsNullOrWhiteSpace(p.CategoryName) ? "General" : p.CategoryName.Trim(), SelectedCategory, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return query;
+        }
+    }
+
+    private IEnumerable<IGrouping<string, ProductDto>> GroupedProducts =>
+        FilteredProducts
+            .GroupBy(p => string.IsNullOrWhiteSpace(p.CategoryName) ? "General" : p.CategoryName.Trim())
+            .OrderBy(g => g.Key);
+
+    private decimal CartTotal => CartItems.Sum(c => c.Qty * c.Price);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProducts();
+        await LoadTodaySales();
+    }
+
+    private async Task SetActiveView(string view)
+    {
+        ActiveView = view;
+        if (view == "HISTORY")
+        {
+            await LoadTodaySales();
+        }
+    }
+
+    private async Task LoadTodaySales()
+    {
+        int branchId = CurrentUser.BranchId ?? 1;
+        var today = DateTime.UtcNow.Date;
+        TodaySales = await FinancialService.GetRevenueTransactionsAsync(
+            today, today, branchId, RevenueTransactionType.StockSale, null, null
+        );
+    }
+
+    private async Task LoadProducts()
+    {
+        if (CurrentUser.TenantId.HasValue)
+        {
+            var tenant = await TenantService.GetTenantByIdAsync(CurrentUser.TenantId.Value);
+            if (tenant != null && !tenant.InventoryModuleEnabled)
+            {
+                IsModuleDisabled = true;
+                return;
+            }
+        }
+        IsModuleDisabled = false;
+        Products = await InventoryService.GetProductsAsync();
+    }
+
+    private void AddToCart(ProductDto product)
+    {
+        var existing = CartItems.FirstOrDefault(c => c.Product.Id == product.Id);
+        if (existing != null)
+        {
+            existing.Qty++;
+        }
+        else
+        {
+            CartItems.Add(new CartItem
+            {
+                Product = product,
+                Qty = 1,
+                Price = product.PromoPrice ?? product.SalePrice
+            });
+        }
+    }
+
+    private void IncrementQty(CartItem item) => item.Qty++;
+
+    private void DecrementQty(CartItem item)
+    {
+        item.Qty--;
+        if (item.Qty <= 0)
+        {
+            CartItems.Remove(item);
+        }
+    }
+
+    private async Task CompleteSale()
+    {
+        if (CartItems.Count == 0) return;
+
+        int branchId = CurrentUser.BranchId ?? 1;
+        string cashier = CurrentUser.Username ?? "Front Desk Staff";
+
+        var items = CartItems.Select(c => (c.Product.Id, c.Qty, c.Price)).ToList();
+        var order = await InventoryService.ProcessSalesOrderAsync(null, branchId, items, SelectedMethod, cashier);
+
+        LastInvoiceNumber = order.InvoiceNumber;
+        LastPaidTotal = CartTotal;
+        LastSoldItems = CartItems.Select(c => (c.Product.ProductName, c.Qty, c.Price)).ToList();
+
+        CartItems.Clear();
+        ShowReceiptModal = true;
+        await LoadProducts();
+        await LoadTodaySales();
+    }
+
+    private void OpenStaffActionModal(RevenueTransactionDto sale)
+    {
+        SelectedSaleForAdjustment = sale;
+        StaffActionType = 1;
+        StaffProposedAmount = sale.Amount;
+        StaffProposedMethod = (int)sale.PaymentMethod;
+        StaffReason = string.Empty;
+        StaffActionErrorMessage = string.Empty;
+        ShowStaffAdjustmentModal = true;
+    }
+
+    private void CloseStaffActionModal()
+    {
+        ShowStaffAdjustmentModal = false;
+        SelectedSaleForAdjustment = null;
+    }
+
+    private async Task SubmitStaffActionRequest()
+    {
+        if (SelectedSaleForAdjustment == null || string.IsNullOrWhiteSpace(StaffReason))
+        {
+            StaffActionErrorMessage = "Please enter an explanation for Gym HQ.";
+            return;
+        }
+
+        IsSubmittingStaffAction = true;
+        StaffActionErrorMessage = string.Empty;
+
+        try
+        {
+            var actionType = (AdjustmentActionType)StaffActionType;
+            PaymentMethod? propMethod = actionType == AdjustmentActionType.PaymentMethodCorrection ? (PaymentMethod)StaffProposedMethod : null;
+
+            await FinancialService.SubmitAdjustmentRequestAsync(
+                RevenueTransactionType.StockSale,
+                SelectedSaleForAdjustment.Id,
+                actionType,
+                StaffProposedAmount,
+                propMethod,
+                StaffReason.Trim(),
+                CurrentUser.Username ?? "Front Desk Staff"
+            );
+
+            CloseStaffActionModal();
+            await LoadTodaySales();
+        }
+        catch (Exception ex)
+        {
+            StaffActionErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsSubmittingStaffAction = false;
+        }
+    }
+
+    private class CartItem
+    {
+        public ProductDto Product { get; set; } = new();
+        public int Qty { get; set; }
+        public decimal Price { get; set; }
+    }
+}

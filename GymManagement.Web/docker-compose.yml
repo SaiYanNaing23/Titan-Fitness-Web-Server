@@ -1,0 +1,61 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gym_management_web
+    restart: unless-stopped
+    ports:
+      - "5254:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DatabaseProvider=MySql
+      - "ConnectionStrings__DefaultConnection=Server=mysql;Port=3306;Database=gym_management_db;User=gym_admin;Password=${GYM_DB_PASSWORD:?Set GYM_DB_PASSWORD in .env};CharSet=utf8mb4;"
+      - ConnectionStrings__Redis=redis:6379
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - gym-net
+
+  mysql:
+    image: mysql:8.0
+    container_name: gym_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${GYM_DB_ROOT_PASSWORD:?Set GYM_DB_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: gym_management_db
+      MYSQL_USER: gym_admin
+      MYSQL_PASSWORD: ${GYM_DB_PASSWORD:?Set GYM_DB_PASSWORD in .env}
+    ports:
+      - "3306:3306"
+    volumes:
+      - gym_mysql_data:/var/lib/mysql
+    networks:
+      - gym-net
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h localhost -u root"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: gym_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - gym_redis_data:/data
+    networks:
+      - gym-net
+
+volumes:
+  gym_mysql_data:
+  gym_redis_data:
+
+networks:
+  gym-net:
+    driver: bridge

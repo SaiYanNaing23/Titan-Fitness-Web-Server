@@ -1,0 +1,1009 @@
+@page "/admin/daily-revenue"
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Enums
+@inject IFinancialService FinancialService
+@inject IOrganizationService OrgService
+@inject ICurrentUserService CurrentUser
+@inject NavigationManager Navigation
+@inject IPaymentNotificationService NotificationService
+@implements IDisposable
+
+<div class="page-header-row">
+    <div class="page-title">
+        <i class="bi bi-cash-stack text-primary"></i>
+        <span>Daily Revenue &amp; Branch Collections</span>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        @if (PendingAdjustmentsCount > 0)
+        {
+            <button class="btn btn-warning btn-sm d-flex align-items-center gap-1.5 shadow-sm fw-bold px-3" 
+                    @onclick='() => SetActiveTab("APPROVALS")'>
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <span>@PendingAdjustmentsCount Pending Approvals</span>
+            </button>
+        }
+        <button class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1.5 bg-white" @onclick="RefreshData">
+            <i class="bi bi-arrow-clockwise"></i>
+            <span>Refresh</span>
+        </button>
+    </div>
+</div>
+
+<!-- Unified Tab Hub Card (Matching Inventory & Stock Hub) -->
+<div class="gym-card mb-4">
+    <div class="card-header bg-transparent border-bottom px-4 pt-3 pb-0">
+        <ul class="nav nav-tabs border-0 gap-2">
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold @(ActiveTab == "DASHBOARD" ? "active" : "")" 
+                        @onclick='() => SetActiveTab("DASHBOARD")'>
+                    <i class="bi bi-speedometer2 me-2"></i>Revenue Dashboard
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold @(ActiveTab == "ALL" ? "active" : "")" 
+                        @onclick='() => SetActiveTab("ALL")'>
+                    <i class="bi bi-list-check me-2"></i>All Daily Transactions
+                    <span class="badge rounded-pill bg-light text-secondary ms-2 border">@DailySummary.TotalTransactionsCount</span>
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold @(ActiveTab == "MEMBER_FEE" ? "active" : "")" 
+                        @onclick='() => SetActiveTab("MEMBER_FEE")'>
+                    <i class="bi bi-people me-2"></i>Member Fee Collection
+                    <span class="badge rounded-pill bg-light text-secondary ms-2 border">@DailySummary.MemberFeeCount</span>
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold @(ActiveTab == "STOCK_SALE" ? "active" : "")" 
+                        @onclick='() => SetActiveTab("STOCK_SALE")'>
+                    <i class="bi bi-cart3 me-2"></i>Stock POS Sales
+                    <span class="badge rounded-pill bg-light text-secondary ms-2 border">@DailySummary.StockSalesCount</span>
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link px-4 py-2.5 fw-semibold position-relative @(ActiveTab == "APPROVALS" ? "active" : "")" 
+                        @onclick='() => SetActiveTab("APPROVALS")'>
+                    <i class="bi bi-shield-check me-2"></i>HQ Approvals &amp; Adjustments
+                    @if (PendingAdjustmentsCount > 0)
+                    {
+                        <span class="badge bg-danger text-white rounded-pill ms-2" title="@PendingAdjustmentsCount Pending Adjustments">
+                            <i class="bi bi-bell-fill me-1"></i>@PendingAdjustmentsCount Pending
+                        </span>
+                    }
+                </button>
+            </li>
+        </ul>
+    </div>
+
+    <div class="card-body p-4">
+        @if (ActiveTab == "DASHBOARD")
+        {
+            <!-- TAB 1: REVENUE DASHBOARD -->
+            <!-- Filter Control Bar inside Dashboard -->
+            <div class="gym-card mb-4 border bg-light bg-opacity-50 shadow-none">
+                <div class="gym-card-body p-3">
+                    <div class="row g-2.5 align-items-center">
+                        <!-- Date Picker & Quick Date Buttons -->
+                        <div class="col-lg-4 col-md-6">
+                            <label class="form-label small text-muted mb-1 fw-semibold" style="font-size: 0.72rem;">Audit Date</label>
+                            <div class="d-flex gap-1.5 align-items-center">
+                                <input type="date" class="form-control form-control-sm bg-white" 
+                                       value="@SelectedDate.ToString("yyyy-MM-dd")" 
+                                       @onchange="OnDateChanged" />
+                                <button class="btn btn-sm @(IsToday ? "btn-primary text-white" : "btn-outline-secondary bg-white") py-1 px-2.5" 
+                                        style="font-size: 0.75rem; white-space: nowrap;" 
+                                        @onclick="SelectToday">
+                                    Today
+                                </button>
+                                <button class="btn btn-sm @(IsYesterday ? "btn-primary text-white" : "btn-outline-secondary bg-white") py-1 px-2.5" 
+                                        style="font-size: 0.75rem; white-space: nowrap;" 
+                                        @onclick="SelectYesterday">
+                                    Yesterday
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Branch Filter -->
+                        <div class="col-lg-3 col-md-6">
+                            <label class="form-label small text-muted mb-1 fw-semibold" style="font-size: 0.72rem;">Branch Scope</label>
+                            <select class="form-select form-select-sm bg-white" @bind="SelectedBranchId" @bind:after="RefreshData">
+                                <option value="0">🏢 All Branches (HQ Consolidated)</option>
+                                @foreach (var b in Branches)
+                                {
+                                    <option value="@b.Id">@b.BranchName (@b.BranchCode)</option>
+                                }
+                            </select>
+                        </div>
+
+                        <!-- Revenue Category Filter -->
+                        <div class="col-lg-2 col-md-4">
+                            <label class="form-label small text-muted mb-1 fw-semibold" style="font-size: 0.72rem;">Revenue Category</label>
+                            <select class="form-select form-select-sm bg-white" @bind="SelectedCategory" @bind:after="RefreshData">
+                                <option value="ALL">All Categories</option>
+                                <option value="MEMBER_FEE">💳 Member Fee Only</option>
+                                <option value="STOCK_SALE">🛍️ POS Stock Sales Only</option>
+                            </select>
+                        </div>
+
+                        <!-- Payment Method Filter -->
+                        <div class="col-lg-3 col-md-4">
+                            <label class="form-label small text-muted mb-1 fw-semibold" style="font-size: 0.72rem;">Payment Method</label>
+                            <select class="form-select form-select-sm bg-white" @bind="SelectedPaymentMethod" @bind:after="RefreshData">
+                                <option value="0">All Payment Methods</option>
+                                <option value="1">Cash</option>
+                                <option value="3">KBZPay (Mobile)</option>
+                                <option value="4">WavePay (Mobile)</option>
+                                <option value="2">Credit / Debit Card</option>
+                                <option value="5">Bank Transfer</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Daily Summary KPI Cards -->
+            <div class="row g-3 mb-4">
+                <!-- Card 1: Total Revenue -->
+                <div class="col-lg-3 col-md-6">
+                    <div class="gym-card p-3 h-100 border shadow-none" style="border-top: 3px solid #00b894 !important;">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <span class="text-muted small fw-bold text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.05em;">Total Daily Revenue</span>
+                            <div class="rounded-circle p-2 bg-success bg-opacity-10 text-success d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;">
+                                <i class="bi bi-wallet2 fs-6"></i>
+                            </div>
+                        </div>
+                        <div class="fw-bold fs-4 text-dark mb-1">
+                            @DailySummary.TotalRevenue.ToString("N0") <span class="fs-6 fw-normal text-muted">MMK</span>
+                        </div>
+                        <div class="text-secondary small d-flex align-items-center gap-1.5" style="font-size: 0.75rem;">
+                            <span class="badge bg-light text-dark border">@DailySummary.TotalTransactionsCount Transactions</span>
+                            <span>Across all branches</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 2: Member Fee Collections -->
+                <div class="col-lg-3 col-md-6">
+                    <div class="gym-card p-3 h-100 border shadow-none" style="border-top: 3px solid #0984e3 !important; cursor: pointer;" @onclick='() => SetActiveTab("MEMBER_FEE")'>
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <span class="text-muted small fw-bold text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.05em;">Member Fee Collections</span>
+                            <div class="rounded-circle p-2 bg-primary bg-opacity-10 text-primary d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;">
+                                <i class="bi bi-people-fill fs-6"></i>
+                            </div>
+                        </div>
+                        <div class="fw-bold fs-4 text-dark mb-1">
+                            @DailySummary.MemberFeeTotal.ToString("N0") <span class="fs-6 fw-normal text-muted">MMK</span>
+                        </div>
+                        <div class="text-secondary small d-flex align-items-center gap-1.5" style="font-size: 0.75rem;">
+                            <span class="badge bg-primary bg-opacity-10 text-primary">@DailySummary.MemberFeeCount Subscriptions</span>
+                            <span>@(DailySummary.TotalRevenue > 0 ? (DailySummary.MemberFeeTotal / DailySummary.TotalRevenue * 100).ToString("N0") : "0")% of total</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 3: POS Stock Sales -->
+                <div class="col-lg-3 col-md-6">
+                    <div class="gym-card p-3 h-100 border shadow-none" style="border-top: 3px solid #6c5ce7 !important; cursor: pointer;" @onclick='() => SetActiveTab("STOCK_SALE")'>
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <span class="text-muted small fw-bold text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.05em;">POS Stock Sales</span>
+                            <div class="rounded-circle p-2 bg-info bg-opacity-10 text-info d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;">
+                                <i class="bi bi-cart3 fs-6"></i>
+                            </div>
+                        </div>
+                        <div class="fw-bold fs-4 text-dark mb-1">
+                            @DailySummary.StockSalesTotal.ToString("N0") <span class="fs-6 fw-normal text-muted">MMK</span>
+                        </div>
+                        <div class="text-secondary small d-flex align-items-center gap-1.5" style="font-size: 0.75rem;">
+                            <span class="badge bg-info bg-opacity-10 text-info">@DailySummary.StockSalesCount Retail Invoices</span>
+                            <span>@(DailySummary.TotalRevenue > 0 ? (DailySummary.StockSalesTotal / DailySummary.TotalRevenue * 100).ToString("N0") : "0")% of total</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 4: Immutability / Pending Approvals -->
+                <div class="col-lg-3 col-md-6">
+                    <div class="gym-card p-3 h-100 border shadow-none @(PendingAdjustmentsCount > 0 ? "border-warning" : "")" style="border-top: 3px solid @(PendingAdjustmentsCount > 0 ? "#e17055" : "#00b894") !important; cursor: pointer;" @onclick='() => SetActiveTab("APPROVALS")'>
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <span class="text-muted small fw-bold text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.05em;">HQ Audit &amp; Approvals</span>
+                            <div class="rounded-circle p-2 @(PendingAdjustmentsCount > 0 ? "bg-warning bg-opacity-15 text-warning" : "bg-success bg-opacity-10 text-success") d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;">
+                                <i class="bi @(PendingAdjustmentsCount > 0 ? "bi-bell-fill" : "bi-check2-circle") fs-6"></i>
+                            </div>
+                        </div>
+                        <div class="fw-bold fs-4 @(PendingAdjustmentsCount > 0 ? "text-warning" : "text-dark") mb-1">
+                            @PendingAdjustmentsCount <span class="fs-6 fw-normal text-muted">Awaiting Decision</span>
+                        </div>
+                        <div class="text-secondary small" style="font-size: 0.75rem;">
+                            @if (PendingAdjustmentsCount > 0)
+                            {
+                                <span class="text-danger fw-semibold">Action required to settle entries</span>
+                            }
+                            else
+                            {
+                                <span class="text-success"><i class="bi bi-shield-check me-1"></i>All entries locked &amp; settled</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Branch Revenue Distribution Strip (When viewing All Branches) -->
+            @if (SelectedBranchId == 0 && DailySummary.BranchSummaries.Any())
+            {
+                <div class="gym-card mb-4 border shadow-none p-3.5">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <span class="fw-bold text-dark small" style="font-size: 0.82rem;">
+                            <i class="bi bi-buildings text-primary me-1.5"></i>Branch Daily Revenue Share
+                        </span>
+                        <span class="text-muted small" style="font-size: 0.72rem;">@DailySummary.BranchSummaries.Count Branches Active</span>
+                    </div>
+                    <div class="row g-2.5">
+                        @foreach (var b in DailySummary.BranchSummaries)
+                        {
+                            <div class="col-md-4 col-sm-6">
+                                <div class="p-2.5 rounded-3 border bg-light h-100">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="fw-bold text-dark" style="font-size: 0.8rem;">@b.BranchName</span>
+                                        <span class="badge bg-white text-dark border small font-monospace">@b.PercentageOfTotal%</span>
+                                    </div>
+                                    <div class="fw-bold text-primary mb-1.5" style="font-size: 0.95rem;">
+                                        @b.TotalRevenue.ToString("N0") <small class="text-muted fw-normal" style="font-size: 0.7rem;">MMK</small>
+                                    </div>
+                                    <!-- Progress mini bar -->
+                                    <div class="progress mb-1.5" style="height: 5px;">
+                                        <div class="progress-bar bg-success" style="width: @(b.TotalRevenue > 0 ? (b.MemberFeeRevenue / b.TotalRevenue * 100) : 0)%" title="Member Fees"></div>
+                                        <div class="progress-bar bg-info" style="width: @(b.TotalRevenue > 0 ? (b.StockSalesRevenue / b.TotalRevenue * 100) : 0)%" title="Stock Sales"></div>
+                                    </div>
+                                    <div class="d-flex justify-content-between text-muted" style="font-size: 0.68rem;">
+                                        <span>Fee: @b.MemberFeeRevenue.ToString("N0")</span>
+                                        <span>POS: @b.StockSalesRevenue.ToString("N0")</span>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        }
+        else if (ActiveTab == "APPROVALS")
+        {
+            <!-- TAB 5: HQ Approvals Tab -->
+            <div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h6 class="fw-bold mb-0 text-dark">Executive Adjustment &amp; Void Approvals</h6>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm @(ApprovalFilterStatus == null ? "btn-dark" : "btn-outline-secondary") py-1 px-2.5" 
+                                style="font-size: 0.75rem;" 
+                                @onclick="() => FilterApprovals(null)">
+                            All Requests
+                        </button>
+                        <button class="btn btn-sm @(ApprovalFilterStatus == AdjustmentApprovalStatus.Pending ? "btn-warning text-dark fw-bold" : "btn-outline-secondary") py-1 px-2.5" 
+                                style="font-size: 0.75rem;" 
+                                @onclick="() => FilterApprovals(AdjustmentApprovalStatus.Pending)">
+                            Pending (@AdjustmentRequests.Count(r => r.Status == AdjustmentApprovalStatus.Pending))
+                        </button>
+                        <button class="btn btn-sm @(ApprovalFilterStatus == AdjustmentApprovalStatus.Approved ? "btn-success" : "btn-outline-secondary") py-1 px-2.5" 
+                                style="font-size: 0.75rem;" 
+                                @onclick="() => FilterApprovals(AdjustmentApprovalStatus.Approved)">
+                            Approved
+                        </button>
+                        <button class="btn btn-sm @(ApprovalFilterStatus == AdjustmentApprovalStatus.Rejected ? "btn-danger" : "btn-outline-secondary") py-1 px-2.5" 
+                                style="font-size: 0.75rem;" 
+                                @onclick="() => FilterApprovals(AdjustmentApprovalStatus.Rejected)">
+                            Rejected
+                        </button>
+                    </div>
+                </div>
+
+                @if (DisplayedApprovals.Count == 0)
+                {
+                    <div class="text-center py-5 text-muted">
+                        <i class="bi bi-check2-all fs-1 text-success opacity-50 d-block mb-2"></i>
+                        <h6 class="fw-bold text-dark">No Adjustment Requests Found</h6>
+                        <p class="small text-secondary mb-0">All entries are settled and verified with no pending staff requests.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="row g-3">
+                        @foreach (var req in DisplayedApprovals)
+                        {
+                            <div class="col-12">
+                                <div class="p-3 rounded-3 border bg-white shadow-sm d-flex flex-wrap align-items-center justify-content-between gap-3 @(req.Status == AdjustmentApprovalStatus.Pending ? "border-warning" : "")">
+                                    <div class="d-flex align-items-start gap-3">
+                                        <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0 mt-1" 
+                                             style="width: 40px; height: 40px; background: @(req.ActionType == AdjustmentActionType.VoidRefund ? "rgba(225, 112, 85, 0.15); color: #d63031;" : "rgba(9, 132, 227, 0.15); color: #0984e3;")">
+                                            <i class="bi @(req.ActionType == AdjustmentActionType.VoidRefund ? "bi-x-octagon-fill" : "bi-pencil-fill") fs-5"></i>
+                                        </div>
+                                        <div>
+                                            <div class="d-flex align-items-center gap-2 mb-1">
+                                                <span class="badge @(req.ActionType == AdjustmentActionType.VoidRefund ? "bg-danger" : "bg-primary") py-1 px-2" style="font-size: 0.72rem;">
+                                                    @req.ActionType
+                                                </span>
+                                                <span class="font-monospace fw-bold text-dark">@req.ReferenceNumber</span>
+                                                <span class="badge bg-light text-secondary border">@req.BranchName</span>
+                                                <span class="badge @(req.Status == AdjustmentApprovalStatus.Pending ? "bg-warning text-dark" : req.Status == AdjustmentApprovalStatus.Approved ? "bg-success" : "bg-danger") py-0.5 px-2" style="font-size: 0.7rem;">
+                                                    @req.Status
+                                                </span>
+                                            </div>
+                                            <div class="fw-semibold text-dark small mb-1" style="font-size: 0.82rem;">
+                                                Customer: @req.CustomerOrMemberName | Original: <strong>@req.OriginalAmount.ToString("N0") MMK</strong> (@req.OriginalPaymentMethod)
+                                                @if (req.ActionType != AdjustmentActionType.VoidRefund)
+                                                {
+                                                    <span>&rarr; Proposed: <strong class="text-primary">@req.ProposedAmount.ToString("N0") MMK</strong></span>
+                                                }
+                                            </div>
+                                            <div class="p-2 rounded-2 bg-light border small text-secondary mb-1" style="font-size: 0.76rem; max-width: 650px;">
+                                                <strong class="text-dark"><i class="bi bi-chat-left-quote me-1"></i>Staff Justification:</strong> @req.Reason
+                                            </div>
+                                            <div class="text-muted small" style="font-size: 0.7rem;">
+                                                Submitted by: <strong>@req.RequestedBy</strong> on @req.RequestedDate.ToString("dd MMM yyyy, hh:mm tt")
+                                                @if (!string.IsNullOrWhiteSpace(req.ReviewedBy))
+                                                {
+                                                    <span class="ms-2">| Reviewed by: <strong>@req.ReviewedBy</strong> (@req.ReviewedDate?.ToString("dd MMM yyyy")) - <em>"@req.ReviewNotes"</em></span>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    @if (req.Status == AdjustmentApprovalStatus.Pending)
+                                    {
+                                        <div class="d-flex align-items-center gap-2">
+                                            <button class="btn btn-outline-danger btn-sm px-3" @onclick="() => OpenRejectModal(req)">
+                                                <i class="bi bi-x-lg me-1"></i>Reject
+                                            </button>
+                                            <button class="btn btn-success btn-sm px-3 shadow-sm fw-bold" @onclick="() => OpenApproveModal(req)">
+                                                <i class="bi bi-check-lg me-1"></i>Approve Adjustment
+                                            </button>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <!-- TAB 2, 3, 4: TRANSACTIONS TABLE (All, Member Fee, Stock Sales) -->
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                <!-- Date & Branch Toolbar inside Transaction Tabs -->
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <div class="d-flex align-items-center gap-1">
+                        <input type="date" class="form-control form-control-sm" style="width: 140px;"
+                               value="@SelectedDate.ToString("yyyy-MM-dd")" 
+                               @onchange="OnDateChanged" />
+                        <button class="btn btn-sm @(IsToday ? "btn-primary text-white" : "btn-outline-secondary bg-white") py-1 px-2" 
+                                style="font-size: 0.75rem;" 
+                                @onclick="SelectToday">
+                            Today
+                        </button>
+                    </div>
+                    <select class="form-select form-select-sm" style="width: 190px;" @bind="SelectedBranchId" @bind:after="RefreshData">
+                        <option value="0">🏢 All Branches</option>
+                        @foreach (var b in Branches)
+                        {
+                            <option value="@b.Id">@b.BranchName</option>
+                        }
+                    </select>
+                </div>
+
+                <!-- Search Input & Count -->
+                <div class="d-flex align-items-center gap-2">
+                    <div class="input-group" style="max-width: 320px;">
+                        <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-muted"></i></span>
+                        <input type="text" class="form-control form-control-sm border-start-0" 
+                               placeholder="Search invoice, member, cashier..." 
+                               @bind="SearchText" @bind:event="oninput" @onkeyup="ApplyClientFilter" />
+                    </div>
+                    <span class="text-muted small" style="font-size: 0.75rem; white-space: nowrap;">
+                        <strong>@DisplayedTransactions.Count</strong> of <strong>@FilteredTransactions.Count</strong>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Ledger Transactions Table -->
+            <div class="table-responsive border rounded-3 overflow-hidden">
+                <table class="table table-hover align-middle mb-0" style="font-size: 0.82rem;">
+                    <thead class="bg-light text-muted text-uppercase" style="font-size: 0.7rem; letter-spacing: 0.04em;">
+                        <tr>
+                            <th class="ps-3 py-2.5" style="cursor: pointer; user-select: none;" @onclick="ToggleTimeSort" title="Click to toggle Date &amp; Time Sort (Ascending / Descending)">
+                                <div class="d-inline-flex align-items-center gap-1">
+                                    <span>Date &amp; Time / Branch</span>
+                                    <i class="bi @(IsTimeSortAscending ? "bi-sort-up text-primary" : "bi-sort-down text-primary")"></i>
+                                </div>
+                            </th>
+                            <th class="py-2.5">Type</th>
+                            <th class="py-2.5">Ref / Invoice #</th>
+                            <th class="py-2.5">Customer / Member</th>
+                            <th class="py-2.5">Description</th>
+                            <th class="py-2.5">Staff / Cashier</th>
+                            <th class="py-2.5">Payment Method</th>
+                            <th class="text-end py-2.5">Amount (MMK)</th>
+                            <th class="text-center py-2.5">Audit Integrity</th>
+                            <th class="text-center pe-3 py-2.5">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (DisplayedTransactions.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="10" class="text-center py-5 text-muted">
+                                    <i class="bi bi-inbox fs-2 text-secondary opacity-50 d-block mb-2"></i>
+                                    <span>No revenue entries found matching current date and filters.</span>
+                                </td>
+                            </tr>
+                        }
+                        @foreach (var t in DisplayedTransactions)
+                        {
+                            <tr class="@(t.IsVoided ? "table-secondary opacity-75" : t.IsAdjustmentPending ? "table-warning bg-opacity-10" : "")">
+                                <td class="ps-3 py-2.5">
+                                    <div class="fw-semibold text-dark">
+                                        @t.TransactionDate.ToString("hh:mm tt")
+                                        <span class="text-muted fw-normal small ms-1" style="font-size: 0.72rem;">@t.TransactionDate.ToString("dd MMM yyyy")</span>
+                                    </div>
+                                    <div class="text-muted small" style="font-size: 0.7rem;">
+                                        <i class="bi bi-geo-alt me-0.5"></i>@t.BranchName
+                                    </div>
+                                </td>
+                                <td>
+                                    @if (t.TransactionType == RevenueTransactionType.MemberFee)
+                                    {
+                                        <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 py-1 px-2">
+                                            <i class="bi bi-person-badge me-1"></i>Member Fee
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 py-1 px-2">
+                                            <i class="bi bi-cart me-1"></i>Stock POS
+                                        </span>
+                                    }
+                                </td>
+                                <td>
+                                    <span class="font-monospace fw-bold text-dark">@t.ReferenceNumber</span>
+                                </td>
+                                <td>
+                                    <div class="fw-semibold text-dark">@t.CustomerOrMemberName</div>
+                                    @if (!string.IsNullOrWhiteSpace(t.CustomerPhone))
+                                    {
+                                        <div class="text-secondary small font-monospace" style="font-size: 0.68rem;">@t.CustomerPhone</div>
+                                    }
+                                </td>
+                                <td>
+                                    <div class="text-truncate" style="max-width: 220px;" title="@t.ItemDescription">
+                                        @t.ItemDescription
+                                    </div>
+                                </td>
+                                <td>
+                                    <span class="text-secondary small">@t.CashierOrStaff</span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-light text-dark border">
+                                        @FormatPaymentMethod(t.PaymentMethod)
+                                    </span>
+                                </td>
+                                <td class="text-end">
+                                    <div class="fw-bold @(t.IsVoided ? "text-decoration-line-through text-muted" : "text-dark")">
+                                        @t.Amount.ToString("N0")
+                                    </div>
+                                    @if (t.DiscountApplied > 0)
+                                    {
+                                        <div class="text-muted small" style="font-size: 0.68rem;">
+                                            Disc: -@t.DiscountApplied.ToString("N0")
+                                        </div>
+                                    }
+                                </td>
+                                <td class="text-center">
+                                    @if (t.IsVoided)
+                                    {
+                                        <span class="badge bg-danger py-1 px-2" title="@t.VoidReason">
+                                            <i class="bi bi-x-circle me-1"></i>Voided / Refunded
+                                        </span>
+                                    }
+                                    else if (t.IsAdjustmentPending)
+                                    {
+                                        <span class="badge bg-warning text-dark py-1 px-2" title="Requested by staff: @t.PendingAdjustmentReason">
+                                            <i class="bi bi-hourglass-split me-1"></i>Approval Pending
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 py-1 px-2" title="Immutably recorded and locked.">
+                                            <i class="bi bi-lock-fill me-1"></i>Locked / Settled
+                                        </span>
+                                    }
+                                </td>
+                                <td class="text-center pe-3">
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-outline-secondary py-0.5 px-2 bg-white" 
+                                                type="button" 
+                                                @onclick="() => OpenActionModal(t)">
+                                            <i class="bi bi-pencil-square me-1"></i>Adjust / Void
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Modal 1: Request Adjustment / Void (Immutability Enforcement Prompt) -->
+@if (ShowActionModal && SelectedTransactionForAction != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0 rounded-4">
+                <div class="modal-header border-bottom-0 pb-0 pt-3 px-4">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 36px; height: 36px; background: rgba(0, 184, 148, 0.15); color: #00b894;">
+                            <i class="bi bi-shield-lock-fill fs-5"></i>
+                        </div>
+                        <div>
+                            <h5 class="modal-title fw-bold text-dark fs-6 mb-0">Financial Adjustment Request</h5>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseActionModal"></button>
+                </div>
+
+                <div class="modal-body px-4 py-3">
+                    <div class="alert alert-warning py-2 px-3 small rounded-3 d-flex align-items-center gap-2 mb-3">
+                        <i class="bi bi-lock-fill fs-5 text-warning"></i>
+                        <div style="font-size: 0.75rem; line-height: 1.35;">
+                            <strong>Entry Locked:</strong> Direct edits and deletes are blocked. Submitting this form sends an official audit adjustment request to Gym HQ for review.
+                        </div>
+                    </div>
+
+                    <div class="p-2.5 rounded-3 bg-light border mb-3 small" style="font-size: 0.76rem;">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Branch / Staff:</span>
+                            <span class="fw-semibold text-dark">@SelectedTransactionForAction.BranchName (@SelectedTransactionForAction.CashierOrStaff)</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Customer:</span>
+                            <span class="fw-semibold text-dark">@SelectedTransactionForAction.CustomerOrMemberName</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Current Amount:</span>
+                            <span class="fw-bold text-dark font-monospace">@SelectedTransactionForAction.Amount.ToString("N0") MMK (@SelectedTransactionForAction.PaymentMethod)</span>
+                        </div>
+                    </div>
+
+                    <div class="mb-2.5">
+                        <label class="form-label small fw-bold text-dark mb-1">Adjustment Action Required</label>
+                        <select class="form-select form-select-sm" @bind="ActionRequestType">
+                            <option value="1">Void &amp; Refund Entire Entry (Cancel Transaction)</option>
+                            <option value="2">Amount / Discount Correction</option>
+                            <option value="3">Payment Method Correction</option>
+                        </select>
+                    </div>
+
+                    @if (ActionRequestType == 2)
+                    {
+                        <div class="mb-2.5">
+                            <label class="form-label small fw-bold text-dark mb-1">Proposed Correct Amount (MMK)</label>
+                            <input type="number" class="form-control form-control-sm font-monospace fw-bold" @bind="ActionProposedAmount" />
+                        </div>
+                    }
+                    else if (ActionRequestType == 3)
+                    {
+                        <div class="mb-2.5">
+                            <label class="form-label small fw-bold text-dark mb-1">Proposed Correct Payment Method</label>
+                            <select class="form-select form-select-sm" @bind="ActionProposedMethod">
+                                <option value="1">Cash</option>
+                                <option value="3">KBZPay (Mobile)</option>
+                                <option value="4">WavePay (Mobile)</option>
+                                <option value="2">Credit / Debit Card</option>
+                                <option value="5">Bank Transfer</option>
+                            </select>
+                        </div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-dark mb-1">Official Justification / Reason <span class="text-danger">*</span></label>
+                        <textarea class="form-control form-control-sm" rows="3" 
+                                  placeholder="Explain why this entry must be altered (e.g. Counter barcode scan error, Customer paid via KPay but cashier recorded Cash)..." 
+                                  @bind="ActionReason"></textarea>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(ActionErrorMessage))
+                    {
+                        <div class="alert alert-danger py-1.5 px-2.5 small mb-2">@ActionErrorMessage</div>
+                    }
+                </div>
+
+                <div class="modal-footer border-top-0 pt-0 pb-3 px-4 d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="CloseActionModal">Cancel</button>
+                    <button type="button" class="btn btn-primary btn-sm rounded-pill px-3 fw-bold" 
+                            disabled="@(string.IsNullOrWhiteSpace(ActionReason) || IsSubmittingAction)" 
+                            @onclick="SubmitActionRequest">
+                        @if (IsSubmittingAction)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Submitting...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-send me-1"></i>
+                            <span>Submit for HQ Approval</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 2: Approve Modal -->
+@if (ShowApproveModal && TargetApprovalRequest != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0 rounded-4">
+                <div class="modal-header border-bottom-0 pb-0 pt-3 px-4">
+                    <h5 class="modal-title fw-bold text-success fs-6 mb-0">
+                        <i class="bi bi-check-circle-fill me-1"></i>Approve Adjustment Request
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseApproveModal"></button>
+                </div>
+                <div class="modal-body px-4 py-3">
+                    <p class="small text-secondary mb-2">
+                        Are you sure you want to approve this adjustment for <strong class="text-dark">@TargetApprovalRequest.ReferenceNumber</strong>?
+                    </p>
+                    <div class="p-2.5 rounded-3 bg-light border small mb-3">
+                        <div>Action: <strong>@TargetApprovalRequest.ActionType</strong></div>
+                        <div>Customer: <strong>@TargetApprovalRequest.CustomerOrMemberName</strong></div>
+                        <div>Amount: <strong>@TargetApprovalRequest.OriginalAmount.ToString("N0") MMK &rarr; @TargetApprovalRequest.ProposedAmount.ToString("N0") MMK</strong></div>
+                        <div class="text-muted mt-1">Reason: <em>@TargetApprovalRequest.Reason</em></div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold text-dark mb-1">HQ Approval Notes (Optional)</label>
+                        <input type="text" class="form-control form-control-sm" placeholder="e.g. Verified with branch manager; approved." @bind="ApprovalNotes" />
+                    </div>
+                </div>
+                <div class="modal-footer border-top-0 pt-0 pb-3 px-4">
+                    <button type="button" class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="CloseApproveModal">Cancel</button>
+                    <button type="button" class="btn btn-success btn-sm rounded-pill px-3 fw-bold" @onclick="ExecuteApprove">
+                        Confirm &amp; Apply Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal 3: Reject Modal -->
+@if (ShowRejectModal && TargetApprovalRequest != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0 rounded-4">
+                <div class="modal-header border-bottom-0 pb-0 pt-3 px-4">
+                    <h5 class="modal-title fw-bold text-danger fs-6 mb-0">
+                        <i class="bi bi-x-circle-fill me-1"></i>Reject Adjustment Request
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseRejectModal"></button>
+                </div>
+                <div class="modal-body px-4 py-3">
+                    <p class="small text-secondary mb-2">
+                        Rejecting this request will keep the original financial entry locked and intact.
+                    </p>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold text-dark mb-1">Rejection Reason <span class="text-danger">*</span></label>
+                        <textarea class="form-control form-control-sm" rows="3" placeholder="Explain reason for rejection..." @bind="RejectionReason"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer border-top-0 pt-0 pb-3 px-4">
+                    <button type="button" class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="CloseRejectModal">Cancel</button>
+                    <button type="button" class="btn btn-danger btn-sm rounded-pill px-3 fw-bold" 
+                            disabled="@string.IsNullOrWhiteSpace(RejectionReason)" 
+                            @onclick="ExecuteReject">
+                        Confirm Rejection
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private DateTime SelectedDate = DateTime.UtcNow.Date;
+    private int SelectedBranchId = 0;
+    private string SelectedCategory = "ALL";
+    private int SelectedPaymentMethod = 0;
+    private string SearchText = string.Empty;
+    private string ActiveTab = "DASHBOARD";
+
+    private bool IsToday => SelectedDate == DateTime.UtcNow.Date;
+    private bool IsYesterday => SelectedDate == DateTime.UtcNow.Date.AddDays(-1);
+
+    private DailyRevenueSummaryDto DailySummary = new();
+    private List<RevenueTransactionDto> AllTransactions = new();
+    private List<RevenueTransactionDto> FilteredTransactions = new();
+    private List<RevenueTransactionDto> DisplayedTransactions = new();
+    private List<BranchDto> Branches = new();
+    private List<FinancialAdjustmentRequestDto> AdjustmentRequests = new();
+    private List<FinancialAdjustmentRequestDto> DisplayedApprovals = new();
+    private AdjustmentApprovalStatus? ApprovalFilterStatus = null;
+    private int PendingAdjustmentsCount = 0;
+    private bool IsTimeSortAscending = true;
+
+    // Action Modal State
+    private bool ShowActionModal = false;
+    private RevenueTransactionDto? SelectedTransactionForAction;
+    private int ActionRequestType = 1; // 1 = Void, 2 = Amount, 3 = Method
+    private decimal ActionProposedAmount = 0;
+    private int ActionProposedMethod = 1;
+    private string ActionReason = string.Empty;
+    private string ActionErrorMessage = string.Empty;
+    private bool IsSubmittingAction = false;
+
+    // Approval / Reject Modals
+    private bool ShowApproveModal = false;
+    private bool ShowRejectModal = false;
+    private FinancialAdjustmentRequestDto? TargetApprovalRequest;
+    private string ApprovalNotes = string.Empty;
+    private string RejectionReason = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        NotificationService.OnPaymentReceived += HandleLivePaymentReceived;
+        await LoadBranches();
+        await RefreshData();
+    }
+
+    private async Task LoadBranches()
+    {
+        Branches = await OrgService.GetBranchesAsync();
+    }
+
+    private async Task RefreshData()
+    {
+        int? branchFilter = SelectedBranchId > 0 ? SelectedBranchId : null;
+
+        DailySummary = await FinancialService.GetDailyRevenueSummaryAsync(SelectedDate, branchFilter);
+        PendingAdjustmentsCount = DailySummary.PendingAdjustmentsCount;
+
+        RevenueTransactionType? catFilter = SelectedCategory switch
+        {
+            "MEMBER_FEE" => RevenueTransactionType.MemberFee,
+            "STOCK_SALE" => RevenueTransactionType.StockSale,
+            _ => null
+        };
+
+        PaymentMethod? payFilter = SelectedPaymentMethod > 0 ? (PaymentMethod)SelectedPaymentMethod : null;
+
+        AllTransactions = await FinancialService.GetRevenueTransactionsAsync(
+            SelectedDate, 
+            SelectedDate, 
+            branchFilter, 
+            catFilter, 
+            payFilter, 
+            null
+        );
+
+        AdjustmentRequests = await FinancialService.GetAdjustmentRequestsAsync(null, branchFilter);
+        FilterApprovals(ApprovalFilterStatus);
+
+        ApplyTabFilter();
+    }
+
+    private void SetActiveTab(string tab)
+    {
+        ActiveTab = tab;
+        ApplyTabFilter();
+    }
+
+    private void ApplyTabFilter()
+    {
+        if (ActiveTab == "MEMBER_FEE")
+        {
+            FilteredTransactions = AllTransactions.Where(t => t.TransactionType == RevenueTransactionType.MemberFee).ToList();
+        }
+        else if (ActiveTab == "STOCK_SALE")
+        {
+            FilteredTransactions = AllTransactions.Where(t => t.TransactionType == RevenueTransactionType.StockSale).ToList();
+        }
+        else
+        {
+            FilteredTransactions = AllTransactions.ToList();
+        }
+
+        ApplyClientFilter();
+    }
+
+    private void ApplyClientFilter()
+    {
+        var filtered = FilteredTransactions.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            var s = SearchText.Trim().ToLowerInvariant();
+            filtered = filtered.Where(t =>
+                t.ReferenceNumber.ToLowerInvariant().Contains(s) ||
+                t.CustomerOrMemberName.ToLowerInvariant().Contains(s) ||
+                (t.CustomerPhone != null && t.CustomerPhone.Contains(s)) ||
+                t.ItemDescription.ToLowerInvariant().Contains(s) ||
+                t.CashierOrStaff.ToLowerInvariant().Contains(s) ||
+                t.BranchName.ToLowerInvariant().Contains(s)
+            );
+        }
+
+        DisplayedTransactions = (IsTimeSortAscending 
+            ? filtered.OrderBy(t => t.TransactionDate) 
+            : filtered.OrderByDescending(t => t.TransactionDate)).ToList();
+    }
+
+    private void ToggleTimeSort()
+    {
+        IsTimeSortAscending = !IsTimeSortAscending;
+        ApplyClientFilter();
+    }
+
+    private void FilterApprovals(AdjustmentApprovalStatus? status)
+    {
+        ApprovalFilterStatus = status;
+        if (status.HasValue)
+        {
+            DisplayedApprovals = AdjustmentRequests.Where(r => r.Status == status.Value).ToList();
+        }
+        else
+        {
+            DisplayedApprovals = AdjustmentRequests.ToList();
+        }
+    }
+
+    private async Task OnDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var dt))
+        {
+            SelectedDate = dt.Date;
+            await RefreshData();
+        }
+    }
+
+    private async Task SelectToday()
+    {
+        SelectedDate = DateTime.UtcNow.Date;
+        await RefreshData();
+    }
+
+    private async Task SelectYesterday()
+    {
+        SelectedDate = DateTime.UtcNow.Date.AddDays(-1);
+        await RefreshData();
+    }
+
+    private string FormatPaymentMethod(PaymentMethod method) => method switch
+    {
+        PaymentMethod.Cash => "💵 Cash",
+        PaymentMethod.KBZPay => "📱 KBZPay",
+        PaymentMethod.WavePay => "📱 WavePay",
+        PaymentMethod.CreditCard => "💳 Card",
+        PaymentMethod.BankTransfer => "🏦 Bank Transfer",
+        _ => method.ToString()
+    };
+
+    // Modal Actions: Request Adjustment
+    private void OpenActionModal(RevenueTransactionDto item)
+    {
+        SelectedTransactionForAction = item;
+        ActionRequestType = 1;
+        ActionProposedAmount = item.Amount;
+        ActionProposedMethod = (int)item.PaymentMethod;
+        ActionReason = string.Empty;
+        ActionErrorMessage = string.Empty;
+        ShowActionModal = true;
+    }
+
+    private void CloseActionModal()
+    {
+        ShowActionModal = false;
+        SelectedTransactionForAction = null;
+    }
+
+    private async Task SubmitActionRequest()
+    {
+        if (SelectedTransactionForAction == null || string.IsNullOrWhiteSpace(ActionReason))
+        {
+            ActionErrorMessage = "Please provide an explanation / justification for this adjustment.";
+            return;
+        }
+
+        IsSubmittingAction = true;
+        ActionErrorMessage = string.Empty;
+
+        try
+        {
+            var actionType = (AdjustmentActionType)ActionRequestType;
+            PaymentMethod? propMethod = actionType == AdjustmentActionType.PaymentMethodCorrection ? (PaymentMethod)ActionProposedMethod : null;
+
+            await FinancialService.SubmitAdjustmentRequestAsync(
+                SelectedTransactionForAction.TransactionType,
+                SelectedTransactionForAction.Id,
+                actionType,
+                ActionProposedAmount,
+                propMethod,
+                ActionReason.Trim(),
+                CurrentUser.Username ?? "Staff"
+            );
+
+            CloseActionModal();
+            await RefreshData();
+        }
+        catch (Exception ex)
+        {
+            ActionErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsSubmittingAction = false;
+        }
+    }
+
+    // Modal Actions: HQ Approve
+    private void OpenApproveModal(FinancialAdjustmentRequestDto req)
+    {
+        TargetApprovalRequest = req;
+        ApprovalNotes = string.Empty;
+        ShowApproveModal = true;
+    }
+
+    private void CloseApproveModal()
+    {
+        ShowApproveModal = false;
+        TargetApprovalRequest = null;
+    }
+
+    private async Task ExecuteApprove()
+    {
+        if (TargetApprovalRequest == null) return;
+        await FinancialService.ApproveAdjustmentRequestAsync(TargetApprovalRequest.Id, CurrentUser.Username ?? "HQ Admin", ApprovalNotes);
+        CloseApproveModal();
+        await RefreshData();
+    }
+
+    // Modal Actions: HQ Reject
+    private void OpenRejectModal(FinancialAdjustmentRequestDto req)
+    {
+        TargetApprovalRequest = req;
+        RejectionReason = string.Empty;
+        ShowRejectModal = true;
+    }
+
+    private void CloseRejectModal()
+    {
+        ShowRejectModal = false;
+        TargetApprovalRequest = null;
+    }
+
+    private async Task ExecuteReject()
+    {
+        if (TargetApprovalRequest == null || string.IsNullOrWhiteSpace(RejectionReason)) return;
+        await FinancialService.RejectAdjustmentRequestAsync(TargetApprovalRequest.Id, CurrentUser.Username ?? "HQ Admin", RejectionReason);
+        CloseRejectModal();
+        await RefreshData();
+    }
+
+    private async Task HandleLivePaymentReceived(PaymentNotificationDto notif)
+    {
+        await InvokeAsync(async () =>
+        {
+            await RefreshData();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        NotificationService.OnPaymentReceived -= HandleLivePaymentReceived;
+    }
+}

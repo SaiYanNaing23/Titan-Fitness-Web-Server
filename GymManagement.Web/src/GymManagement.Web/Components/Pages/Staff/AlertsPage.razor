@@ -1,0 +1,201 @@
+@page "/staff/alerts"
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Entities
+@using GymManagement.Domain.Enums
+@inject IMembershipService MemberService
+
+<div class="page-header-row">
+    <div class="page-title">Due Period Alerts</div>
+    <div class="d-flex gap-2">
+        <select class="form-select form-select-sm" style="width: 170px;" @bind="SelectedThreshold" @bind:after="LoadAlerts">
+            <option value="3">Due in 3 Days</option>
+            <option value="7">Due in 7 Days</option>
+            <option value="14">Due in 14 Days</option>
+            <option value="30">Due in 30 Days</option>
+        </select>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="stat-card border-danger">
+            <div class="stat-icon bg-danger bg-opacity-10 text-danger">
+                <i class="bi bi-x-octagon"></i>
+            </div>
+            <div>
+                <div class="stat-val text-danger">@AlertList.Count(m => m.DaysRemaining < 0)</div>
+                <div class="stat-label">Already Overdue</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card border-warning">
+            <div class="stat-icon bg-warning bg-opacity-10 text-warning">
+                <i class="bi bi-clock-history"></i>
+            </div>
+            <div>
+                <div class="stat-val text-warning">@AlertList.Count(m => m.DaysRemaining is >= 0 and <= 3)</div>
+                <div class="stat-label">Critical (Within 3 Days)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="stat-card">
+            <div class="stat-icon bg-info bg-opacity-10 text-info">
+                <i class="bi bi-calendar-check"></i>
+            </div>
+            <div>
+                <div class="stat-val">@AlertList.Count(m => m.DaysRemaining > 3)</div>
+                <div class="stat-label">Upcoming Due (4-@SelectedThreshold Days)</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="gym-card">
+    <div class="table-responsive">
+        <table class="gym-table">
+            <thead>
+                <tr>
+                    <th>Member</th>
+                    <th>Code</th>
+                    <th>Phone</th>
+                    <th>Home Branch</th>
+                    <th>Current Plan</th>
+                    <th>Expiry Date</th>
+                    <th>Due Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (AlertList.Count == 0)
+                {
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-secondary">
+                            <i class="bi bi-check-circle fs-3 text-success d-block mb-1"></i>
+                            Great news! No memberships are due within @SelectedThreshold days.
+                        </td>
+                    </tr>
+                }
+                @foreach (var m in AlertList)
+                {
+                    <tr>
+                        <td class="d-flex align-items-center gap-2">
+                            <img src="@(m.PhotoUrl ?? "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80")" 
+                                 class="rounded-circle border" style="width: 36px; height: 36px; object-fit: cover;" />
+                            <span class="fw-bold">@m.FullName</span>
+                        </td>
+                        <td><code>@m.MemberCode</code></td>
+                        <td>@m.PhoneNumber</td>
+                        <td>@m.HomeBranchName</td>
+                        <td><span class="badge bg-light text-dark border">@m.CurrentPlanName</span></td>
+                        <td>@(m.SubscriptionEndDate?.ToString("yyyy-MM-dd") ?? "—")</td>
+                        <td>
+                            @if (m.DaysRemaining < 0)
+                            {
+                                <span class="badge bg-danger">Expired (@Math.Abs(m.DaysRemaining) days ago)</span>
+                            }
+                            else if (m.DaysRemaining <= 3)
+                            {
+                                <span class="badge bg-warning text-dark">Urgent: @m.DaysRemaining days left</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-info bg-opacity-10 text-info">@m.DaysRemaining days left</span>
+                            }
+                        </td>
+                        <td>
+                            <button class="btn btn-primary btn-sm" @onclick="() => OpenQuickRenewModal(m)">
+                                <i class="bi bi-arrow-repeat me-1"></i> Quick Renew
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: Quick Renew -->
+@if (ShowRenewModal && SelectedMember != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Renew Membership</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowRenewModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Member</label>
+                        <input class="form-control" value="@SelectedMember.FullName (@SelectedMember.MemberCode)" disabled />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Package to Renew</label>
+                        <select class="form-select" @bind="RenewPlanId">
+                            @foreach (var p in Plans)
+                            {
+                                <option value="@p.Id">@p.PlanName (@p.BasePrice.ToString("N0") MMK / @p.DurationDays Days)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Payment Method</label>
+                        <select class="form-select" @bind="SelectedPaymentMethod">
+                            <option value="@PaymentMethod.Cash">Cash</option>
+                            <option value="@PaymentMethod.KBZPay">KBZPay</option>
+                            <option value="@PaymentMethod.WavePay">WavePay</option>
+                            <option value="@PaymentMethod.CreditCard">Credit Card</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => ShowRenewModal = false">Cancel</button>
+                    <button class="btn btn-success btn-sm" @onclick="SaveRenewal">Confirm Renewal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<MemberDto> AlertList = new();
+    private List<MembershipPlan> Plans = new();
+    private int SelectedThreshold = 7;
+
+    private bool ShowRenewModal = false;
+    private MemberDto? SelectedMember;
+    private int RenewPlanId;
+    private PaymentMethod SelectedPaymentMethod = PaymentMethod.Cash;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAlerts();
+        Plans = await MemberService.GetPlansAsync();
+        if (Plans.Count > 0)
+        {
+            RenewPlanId = Plans[0].Id;
+        }
+    }
+
+    private async Task LoadAlerts()
+    {
+        AlertList = await MemberService.GetDuePeriodAlertsAsync(SelectedThreshold);
+    }
+
+    private void OpenQuickRenewModal(MemberDto m)
+    {
+        SelectedMember = m;
+        ShowRenewModal = true;
+    }
+
+    private async Task SaveRenewal()
+    {
+        if (SelectedMember == null || RenewPlanId <= 0) return;
+        await MemberService.EnrollSubscriptionAsync(SelectedMember.Id, RenewPlanId, 0, SelectedPaymentMethod);
+        ShowRenewModal = false;
+        await LoadAlerts();
+    }
+}

@@ -1,0 +1,151 @@
+@page "/admin/dashboard"
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Entities
+@using GymManagement.Domain.Enums
+@inject IMembershipService MemberService
+@inject IInventoryService InventoryService
+@inject IOrganizationService OrgService
+
+<div class="page-header-row">
+    <div class="page-title">Executive Dashboard</div>
+    <div class="d-flex align-items-center gap-2">
+        <a href="/admin/daily-revenue" class="btn btn-outline-success btn-sm d-flex align-items-center gap-1.5 shadow-sm fw-bold">
+            <i class="bi bi-cash-stack"></i>
+            <span>Daily Revenue &amp; Approvals</span>
+        </a>
+        <span class="badge bg-primary px-3 py-2">Titan Fitness Club HQ</span>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+                <i class="bi bi-people"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Members.Count</div>
+                <div class="stat-label">Total Enrolled Members</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-success bg-opacity-10 text-success">
+                <i class="bi bi-person-check"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Members.Count(m => m.Status == MemberStatus.Active)</div>
+                <div class="stat-label">Active Pass Holders</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-warning bg-opacity-10 text-warning">
+                <i class="bi bi-bell"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Members.Count(m => m.IsExpiringSoon || m.IsOverdue)</div>
+                <div class="stat-label">Due / Expiring Soon</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-info bg-opacity-10 text-info">
+                <i class="bi bi-box-seam"></i>
+            </div>
+            <div>
+                <div class="stat-val">@PnLSummary.Sum(p => p.GrossProfit).ToString("N0")</div>
+                <div class="stat-label">Stock Retail Margin</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="gym-card h-100">
+            <div class="gym-card-header">
+                <span>Recent Branch Check-In Traffic</span>
+            </div>
+            <div class="table-responsive">
+                <table class="gym-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Member</th>
+                            <th>Code</th>
+                            <th>Branch</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (RecentCheckIns.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="5" class="text-center py-4 text-secondary">No check-ins logged today yet.</td>
+                            </tr>
+                        }
+                        @foreach (var c in RecentCheckIns)
+                        {
+                            <tr>
+                                <td>@c.CheckInTime.ToString("hh:mm tt")</td>
+                                <td class="fw-bold">@c.Member?.FullName</td>
+                                <td><span class="badge bg-light text-dark border">@c.Member?.MemberCode</span></td>
+                                <td>@c.Branch?.BranchName</td>
+                                <td>
+                                    <span class="badge-clean @(c.Status == CheckInStatus.Accepted ? "badge-active" : "badge-expired")">
+                                        @c.Status
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="gym-card h-100">
+            <div class="gym-card-header">
+                <span>Gym Branch Operational Overview</span>
+            </div>
+            <div class="gym-card-body p-0">
+                <div class="list-group list-group-flush">
+                    @foreach (var b in Branches)
+                    {
+                        <div class="list-group-item d-flex justify-content-between align-items-center py-3 px-4">
+                            <div>
+                                <div class="fw-bold">@b.BranchName</div>
+                                <small class="text-secondary">@b.Address</small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-primary rounded-pill">@b.TodayCheckIns Visits Today</span>
+                                <div class="text-secondary small mt-1">@b.StaffCount Staff Assigned</div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<MemberDto> Members = new();
+    private List<MemberCheckIn> RecentCheckIns = new();
+    private List<BranchDto> Branches = new();
+    private List<StockPnLDto> PnLSummary = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Members = await MemberService.GetMembersAsync();
+        RecentCheckIns = await MemberService.GetTodayCheckInsAsync();
+        Branches = await OrgService.GetBranchesAsync();
+        PnLSummary = await InventoryService.GetStockPnLAsync();
+    }
+}

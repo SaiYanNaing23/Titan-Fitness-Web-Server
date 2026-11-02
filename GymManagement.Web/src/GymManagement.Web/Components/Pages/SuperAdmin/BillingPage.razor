@@ -1,0 +1,168 @@
+@page "/superadmin/billing"
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Enums
+@inject ITenantService TenantService
+@inject ICurrentUserService CurrentUser
+@inject NavigationManager Navigation
+
+<div class="page-header-row">
+    <div class="page-title">Postpaid Billing</div>
+    <div class="d-flex gap-2">
+        <select class="form-select form-select-sm" style="width: 140px;" @bind="SelectedMonth">
+            @for (int m = 1; m <= 12; m++)
+            {
+                <option value="@m">@MonthNames[m - 1]</option>
+            }
+        </select>
+        <button class="btn btn-primary btn-sm" @onclick="CalculateMonthlyBilling">
+            <i class="bi bi-calculator me-1"></i> Run Month-End Calculation
+        </button>
+    </div>
+</div>
+
+<div class="gym-card mb-4">
+    <div class="gym-card-header">
+        <span>Tenant Invoices</span>
+    </div>
+    <div class="table-responsive">
+        <table class="gym-table">
+            <thead>
+                <tr>
+                    <th>Billing Period</th>
+                    <th>Tenant Company</th>
+                    <th>Active Members Count</th>
+                    <th>Rate / Member</th>
+                    <th>Total Billed (MMK)</th>
+                    <th>Payment Status</th>
+                    <th>Payment Ref</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (Invoices.Count == 0)
+                {
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-secondary">No invoices generated yet. Click "Run Month-End Calculation".</td>
+                    </tr>
+                }
+                @foreach (var inv in Invoices)
+                {
+                    <tr>
+                        <td class="fw-bold">@MonthNames[inv.BillingMonth - 1] @inv.BillingYear</td>
+                        <td>@inv.CompanyName</td>
+                        <td class="fw-bold text-primary">@inv.ActiveMemberCount</td>
+                        <td>@inv.RatePerMember.ToString("N0") MMK</td>
+                        <td class="fw-bold">@inv.TotalAmount.ToString("N0") MMK</td>
+                        <td>
+                            <span class="badge-clean @(inv.PaymentStatus == InvoicePaymentStatus.Paid ? "badge-active" : "badge-expired")">
+                                @inv.PaymentStatus
+                            </span>
+                        </td>
+                        <td>
+                            @(string.IsNullOrEmpty(inv.PaymentReference) ? "—" : inv.PaymentReference)
+                        </td>
+                        <td>
+                            @if (inv.PaymentStatus != InvoicePaymentStatus.Paid)
+                            {
+                                <button class="btn btn-outline-success btn-sm" @onclick="() => OpenPaymentModal(inv)">
+                                    <i class="bi bi-cash-check me-1"></i> Record Paid
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="text-success small fw-bold">Settled</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: Record Tenant Payment -->
+@if (ShowPayModal && SelectedInvoice != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Record Tenant Payment</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowPayModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Tenant</label>
+                        <input class="form-control" value="@SelectedInvoice.CompanyName" disabled />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Total Amount to Settle</label>
+                        <input class="form-control fw-bold" value="@SelectedInvoice.TotalAmount.ToString("N0") MMK" disabled />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Bank Slip / Transfer Reference</label>
+                        <input class="form-control" @bind="PaymentRef" placeholder="e.g. KBZPay #99882211" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Settlement Notes</label>
+                        <textarea class="form-control" @bind="PaymentNotes" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => ShowPayModal = false">Cancel</button>
+                    <button class="btn btn-success btn-sm" @onclick="ConfirmPayment">Confirm Payment</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<TenantMonthlyInvoiceDto> Invoices = new();
+    private int SelectedMonth = DateTime.UtcNow.Month;
+    private readonly string[] MonthNames = new[] { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+    private bool ShowPayModal = false;
+    private TenantMonthlyInvoiceDto? SelectedInvoice;
+    private string PaymentRef = string.Empty;
+    private string PaymentNotes = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!CurrentUser.IsSuperAdmin)
+        {
+            Navigation.NavigateTo(CurrentUser.IsTenantAdmin ? "/admin/dashboard" : "/staff/checkin", replace: true);
+            return;
+        }
+        await LoadInvoices();
+    }
+
+    private async Task LoadInvoices()
+    {
+        Invoices = await TenantService.GetMonthlyInvoicesAsync();
+    }
+
+    private async Task CalculateMonthlyBilling()
+    {
+        await TenantService.CalculateMonthlyInvoicesAsync(DateTime.UtcNow.Year, SelectedMonth);
+        await LoadInvoices();
+    }
+
+    private void OpenPaymentModal(TenantMonthlyInvoiceDto inv)
+    {
+        SelectedInvoice = inv;
+        PaymentRef = $"TR-{DateTime.UtcNow.Ticks % 1000000}";
+        PaymentNotes = "Paid via bank transfer";
+        ShowPayModal = true;
+    }
+
+    private async Task ConfirmPayment()
+    {
+        if (SelectedInvoice == null) return;
+        await TenantService.RecordInvoicePaymentAsync(SelectedInvoice.Id, PaymentRef, PaymentNotes);
+        ShowPayModal = false;
+        await LoadInvoices();
+    }
+}

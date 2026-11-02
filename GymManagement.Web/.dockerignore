@@ -1,0 +1,13 @@
+**/.git
+**/.vs
+**/.idea
+**/bin
+**/obj
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.log
+.env
+.env.*
+!.env.example
+.system_generated

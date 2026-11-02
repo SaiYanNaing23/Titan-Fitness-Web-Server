@@ -1,0 +1,517 @@
+@page "/staff/members"
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Entities
+@using GymManagement.Domain.Enums
+@inject IMembershipService MemberService
+@inject IFinancialService FinancialService
+@inject ICurrentUserService CurrentUser
+
+<div class="page-header-row">
+    <div class="page-title">Members</div>
+    <button class="btn btn-primary btn-sm" @onclick="OpenRegisterModal">
+        <i class="bi bi-person-plus me-1"></i> Register Member
+    </button>
+</div>
+
+<!-- Search Bar -->
+<div class="gym-card mb-4">
+    <div class="gym-card-body py-3">
+        <div class="input-group">
+            <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+            <input class="form-control" placeholder="Search members by name, phone or code..." 
+                   @bind="SearchText" @bind:event="oninput" @onkeyup="OnSearch" />
+        </div>
+    </div>
+</div>
+
+<div class="gym-card">
+    <div class="table-responsive">
+        <table class="gym-table">
+            <thead>
+                <tr>
+                    <th>Member</th>
+                    <th>Code</th>
+                    <th>Phone</th>
+                    <th>Home Branch</th>
+                    <th>Current Plan</th>
+                    <th>Expiry Date</th>
+                    <th>Days Left</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (Members.Count == 0)
+                {
+                    <tr>
+                        <td colspan="9" class="text-center py-4 text-secondary">No members found.</td>
+                    </tr>
+                }
+                @foreach (var m in Members)
+                {
+                    <tr>
+                        <td class="d-flex align-items-center gap-2">
+                            <img src="@(m.PhotoUrl ?? "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80")" 
+                                 class="rounded-circle border" style="width: 36px; height: 36px; object-fit: cover;" />
+                            <span class="fw-bold">@m.FullName</span>
+                        </td>
+                        <td><code>@m.MemberCode</code></td>
+                        <td>@m.PhoneNumber</td>
+                        <td>@m.HomeBranchName</td>
+                        <td><span class="badge bg-light text-dark border">@m.CurrentPlanName</span></td>
+                        <td>@(m.SubscriptionEndDate?.ToString("yyyy-MM-dd") ?? "—")</td>
+                        <td>
+                            @if (m.DaysRemaining >= 0)
+                            {
+                                <span class="fw-bold @(m.IsExpiringSoon ? "text-warning" : "text-success")">
+                                    @m.DaysRemaining days
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-danger fw-bold">Expired</span>
+                            }
+                        </td>
+                        <td>
+                            <span class="badge-clean @(m.Status == MemberStatus.Active ? "badge-active" : "badge-expired")">
+                                @m.Status
+                            </span>
+                        </td>
+                        <td>
+                            <div class="d-flex align-items-center gap-1.5">
+                                <button class="btn btn-outline-primary btn-sm" @onclick="() => OpenRenewModal(m)">
+                                    <i class="bi bi-arrow-repeat me-1"></i> Collect Fee / Renew
+                                </button>
+                                @if (m.LatestSubscriptionId.HasValue)
+                                {
+                                    @if (m.IsAdjustmentPending)
+                                    {
+                                        <span class="badge bg-warning text-dark py-1 px-2 small" title="HQ Approval Pending">
+                                            <i class="bi bi-hourglass-split me-1"></i>Pending HQ
+                                        </span>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-outline-danger btn-sm py-1 px-2" 
+                                                title="Locked Entry - Request Edit or Refund from HQ" 
+                                                @onclick="() => OpenMemberAdjustmentModal(m)">
+                                            <i class="bi bi-shield-lock-fill me-1"></i>Request Edit
+                                        </button>
+                                    }
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: Register Member -->
+@if (ShowRegisterModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">New Member Registration</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowRegisterModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Full Name</label>
+                        <input class="form-control" @bind="NewMember.FullName" placeholder="e.g. Ko Lin Htet" />
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Phone Number</label>
+                            <input class="form-control" @bind="NewMember.PhoneNumber" placeholder="09..." />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Gender</label>
+                            <select class="form-select" @bind="NewMember.Gender">
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Emergency Contact Name</label>
+                            <input class="form-control" @bind="NewMember.EmergencyContactName" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Emergency Phone</label>
+                            <input class="form-control" @bind="NewMember.EmergencyContactPhone" />
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Initial Membership Package</label>
+                        <select class="form-select" @bind="SelectedPlanId">
+                            <option value="0">No Package (Registration Only)</option>
+                            @foreach (var p in Plans)
+                            {
+                                <option value="@p.Id">@p.PlanName (@p.BasePrice.ToString("N0") MMK)</option>
+                            }
+                        </select>
+                    </div>
+                    @if (SelectedPlanId > 0)
+                    {
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Payment Method</label>
+                            <select class="form-select" @bind="SelectedPaymentMethod">
+                                <option value="@PaymentMethod.Cash">Cash</option>
+                                <option value="@PaymentMethod.KBZPay">KBZPay</option>
+                                <option value="@PaymentMethod.WavePay">WavePay</option>
+                                <option value="@PaymentMethod.CreditCard">Credit Card</option>
+                            </select>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => ShowRegisterModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm" @onclick="SaveMember">Register & Collect Fee</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Fee Collection / Renew -->
+@if (ShowRenewModal && SelectedMember != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Collect Fee & Renew Membership</h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowRenewModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Member</label>
+                        <input class="form-control" value="@SelectedMember.FullName (@SelectedMember.MemberCode)" disabled />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Select Plan</label>
+                        <select class="form-select" @bind="RenewPlanId">
+                            @foreach (var p in Plans)
+                            {
+                                <option value="@p.Id">@p.PlanName (@p.BasePrice.ToString("N0") MMK / @p.DurationDays Days)</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Active Promo Discount (Optional)</label>
+                        <select class="form-select form-select-sm" @onchange="OnRenewPromoSelected">
+                            <option value="0">— No Promotion (Standard Rate) —</option>
+                            @foreach (var promo in AvailablePromos.Where(p => p.IsCurrentlyValid))
+                            {
+                                <option value="@promo.Id">
+                                    @promo.PromotionTitle (@(promo.DiscountPercent > 0 ? $"{promo.DiscountPercent}% OFF" : $"{promo.DiscountAmount:N0} MMK OFF")) — Ends @promo.ValidTo.ToString("dd MMM, hh:mm tt")
+                                </option>
+                            }
+                        </select>
+                        <div class="text-muted small mt-1" style="font-size: 0.73rem;">
+                            <i class="bi bi-shield-check text-success me-1"></i>Only currently valid and non-expired promotions are eligible.
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Discount Applied (MMK)</label>
+                            <input type="number" class="form-control" @bind="RenewDiscount" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Payment Tender</label>
+                            <select class="form-select" @bind="RenewPaymentMethod">
+                                <option value="@PaymentMethod.Cash">Cash</option>
+                                <option value="@PaymentMethod.KBZPay">KBZPay</option>
+                                <option value="@PaymentMethod.WavePay">WavePay</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => ShowRenewModal = false">Cancel</button>
+                    <button class="btn btn-success btn-sm" @onclick="ConfirmRenewal">Confirm Fee Collection</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Request Member Subscription Adjustment / Void -->
+@if (ShowAdjustmentModal && TargetMemberForAdjustment != null && TargetMemberForAdjustment.LatestSubscriptionId.HasValue)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content shadow-lg border-0 rounded-4">
+                <div class="modal-header border-bottom-0 pb-0 pt-3 px-4">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 36px; height: 36px; background: rgba(225, 112, 85, 0.15); color: #d63031;">
+                            <i class="bi bi-shield-lock-fill fs-5"></i>
+                        </div>
+                        <div>
+                            <h5 class="modal-title fw-bold text-dark fs-6 mb-0">Request Subscription Adjustment</h5>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close" @onclick="CloseMemberAdjustmentModal"></button>
+                </div>
+
+                <div class="modal-body px-4 py-3">
+                    <div class="alert alert-warning py-2 px-3 small rounded-3 d-flex align-items-center gap-2 mb-3">
+                        <i class="bi bi-exclamation-triangle-fill fs-5 text-warning"></i>
+                        <div style="font-size: 0.75rem; line-height: 1.35;">
+                            <strong>Entry Locked:</strong> Fee collections cannot be modified directly. Your request will be sent to Gym HQ for executive approval.
+                        </div>
+                    </div>
+
+                    <div class="p-2.5 rounded-3 bg-light border mb-3 small" style="font-size: 0.76rem;">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Member:</span>
+                            <span class="fw-semibold text-dark">@TargetMemberForAdjustment.FullName (@TargetMemberForAdjustment.MemberCode)</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Current Plan:</span>
+                            <span class="fw-semibold text-dark">@TargetMemberForAdjustment.CurrentPlanName</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Recorded Paid Amount:</span>
+                            <span class="fw-bold text-dark font-monospace">@TargetMemberForAdjustment.LatestSubscriptionAmount.ToString("N0") MMK</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted">Payment Tender:</span>
+                            <span class="fw-semibold text-dark">@TargetMemberForAdjustment.LatestPaymentMethod</span>
+                        </div>
+                    </div>
+
+                    <div class="mb-2.5">
+                        <label class="form-label small fw-bold text-dark mb-1">Adjustment Action</label>
+                        <select class="form-select form-select-sm" @bind="AdjustmentActionTypeSelected">
+                            <option value="1">Void &amp; Cancel Subscription (Refund)</option>
+                            <option value="2">Correct Paid Fee Amount</option>
+                            <option value="3">Correct Payment Method</option>
+                        </select>
+                    </div>
+
+                    @if (AdjustmentActionTypeSelected == 2)
+                    {
+                        <div class="mb-2.5">
+                            <label class="form-label small fw-bold text-dark mb-1">Proposed Correct Amount (MMK)</label>
+                            <input type="number" class="form-control form-control-sm font-monospace fw-bold" @bind="AdjustmentProposedAmount" />
+                        </div>
+                    }
+                    else if (AdjustmentActionTypeSelected == 3)
+                    {
+                        <div class="mb-2.5">
+                            <label class="form-label small fw-bold text-dark mb-1">Proposed Correct Payment Method</label>
+                            <select class="form-select form-select-sm" @bind="AdjustmentProposedMethod">
+                                <option value="1">Cash</option>
+                                <option value="3">KBZPay (Mobile)</option>
+                                <option value="4">WavePay (Mobile)</option>
+                                <option value="2">Credit / Debit Card</option>
+                                <option value="5">Bank Transfer</option>
+                            </select>
+                        </div>
+                    }
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-dark mb-1">Reason / Explanation for HQ <span class="text-danger">*</span></label>
+                        <textarea class="form-control form-control-sm" rows="3" 
+                                  placeholder="State why this subscription entry must be adjusted (e.g. Wrong plan selected, cashier typo, customer cancelled on spot)..." 
+                                  @bind="AdjustmentReason"></textarea>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(AdjustmentErrorMessage))
+                    {
+                        <div class="alert alert-danger py-1.5 px-2.5 small mb-2">@AdjustmentErrorMessage</div>
+                    }
+                </div>
+
+                <div class="modal-footer border-top-0 pt-0 pb-3 px-4 d-flex justify-content-between">
+                    <button type="button" class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="CloseMemberAdjustmentModal">Cancel</button>
+                    <button type="button" class="btn btn-primary btn-sm rounded-pill px-3 fw-bold" 
+                            disabled="@(string.IsNullOrWhiteSpace(AdjustmentReason) || IsSubmittingAdjustment)" 
+                            @onclick="SubmitMemberAdjustmentRequest">
+                        @if (IsSubmittingAdjustment)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Submitting...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-send me-1"></i>
+                            <span>Send for HQ Approval</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<MemberDto> Members = new();
+    private List<MembershipPlan> Plans = new();
+    private List<MemberPromotion> AvailablePromos = new();
+    private string SearchText = string.Empty;
+
+    private bool ShowRegisterModal = false;
+    private MemberDto NewMember = new() { Gender = "Male" };
+    private int SelectedPlanId;
+    private PaymentMethod SelectedPaymentMethod = PaymentMethod.Cash;
+
+    private bool ShowRenewModal = false;
+    private MemberDto? SelectedMember;
+    private int RenewPlanId;
+    private decimal RenewDiscount;
+    private PaymentMethod RenewPaymentMethod = PaymentMethod.Cash;
+
+    // Adjustment Request Modal state
+    private bool ShowAdjustmentModal = false;
+    private MemberDto? TargetMemberForAdjustment;
+    private int AdjustmentActionTypeSelected = 1;
+    private decimal AdjustmentProposedAmount = 0;
+    private int AdjustmentProposedMethod = 1;
+    private string AdjustmentReason = string.Empty;
+    private string AdjustmentErrorMessage = string.Empty;
+    private bool IsSubmittingAdjustment = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        Members = await MemberService.GetMembersAsync(SearchText);
+        Plans = await MemberService.GetPlansAsync();
+        AvailablePromos = await MemberService.GetPromotionsAsync();
+        if (Plans.Count > 0 && RenewPlanId == 0)
+        {
+            RenewPlanId = Plans[0].Id;
+        }
+    }
+
+    private void OnRenewPromoSelected(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int promoId) && promoId > 0)
+        {
+            var promo = AvailablePromos.FirstOrDefault(p => p.Id == promoId);
+            if (promo != null && promo.IsCurrentlyValid)
+            {
+                var plan = Plans.FirstOrDefault(p => p.Id == RenewPlanId);
+                var basePrice = plan?.BasePrice ?? 0;
+                if (promo.DiscountPercent > 0)
+                {
+                    RenewDiscount = Math.Round(basePrice * (promo.DiscountPercent / 100m));
+                }
+                else
+                {
+                    RenewDiscount = promo.DiscountAmount;
+                }
+                return;
+            }
+        }
+        RenewDiscount = 0;
+    }
+
+    private async Task OnSearch()
+    {
+        Members = await MemberService.GetMembersAsync(SearchText);
+    }
+
+    private void OpenRegisterModal()
+    {
+        NewMember = new MemberDto { Gender = "Male" };
+        SelectedPlanId = Plans.Count > 0 ? Plans[0].Id : 0;
+        ShowRegisterModal = true;
+    }
+
+    private async Task SaveMember()
+    {
+        if (string.IsNullOrWhiteSpace(NewMember.FullName) || string.IsNullOrWhiteSpace(NewMember.PhoneNumber)) return;
+
+        await MemberService.RegisterMemberAsync(NewMember, SelectedPlanId > 0 ? SelectedPlanId : null, SelectedPaymentMethod);
+        ShowRegisterModal = false;
+        await LoadData();
+    }
+
+    private void OpenRenewModal(MemberDto m)
+    {
+        SelectedMember = m;
+        RenewDiscount = 0;
+        ShowRenewModal = true;
+    }
+
+    private async Task ConfirmRenewal()
+    {
+        if (SelectedMember == null || RenewPlanId <= 0) return;
+        await MemberService.EnrollSubscriptionAsync(SelectedMember.Id, RenewPlanId, RenewDiscount, RenewPaymentMethod);
+        ShowRenewModal = false;
+        await LoadData();
+    }
+
+    private void OpenMemberAdjustmentModal(MemberDto m)
+    {
+        TargetMemberForAdjustment = m;
+        AdjustmentActionTypeSelected = 1;
+        AdjustmentProposedAmount = m.LatestSubscriptionAmount;
+        AdjustmentProposedMethod = m.LatestPaymentMethod.HasValue ? (int)m.LatestPaymentMethod.Value : 1;
+        AdjustmentReason = string.Empty;
+        AdjustmentErrorMessage = string.Empty;
+        ShowAdjustmentModal = true;
+    }
+
+    private void CloseMemberAdjustmentModal()
+    {
+        ShowAdjustmentModal = false;
+        TargetMemberForAdjustment = null;
+    }
+
+    private async Task SubmitMemberAdjustmentRequest()
+    {
+        if (TargetMemberForAdjustment == null || !TargetMemberForAdjustment.LatestSubscriptionId.HasValue) return;
+
+        if (string.IsNullOrWhiteSpace(AdjustmentReason))
+        {
+            AdjustmentErrorMessage = "Please provide an explanation / justification for Gym HQ.";
+            return;
+        }
+
+        IsSubmittingAdjustment = true;
+        AdjustmentErrorMessage = string.Empty;
+
+        try
+        {
+            var actionType = (AdjustmentActionType)AdjustmentActionTypeSelected;
+            PaymentMethod? propMethod = actionType == AdjustmentActionType.PaymentMethodCorrection 
+                ? (PaymentMethod)AdjustmentProposedMethod 
+                : null;
+
+            await FinancialService.SubmitAdjustmentRequestAsync(
+                RevenueTransactionType.MemberFee,
+                TargetMemberForAdjustment.LatestSubscriptionId.Value,
+                actionType,
+                AdjustmentProposedAmount,
+                propMethod,
+                AdjustmentReason.Trim(),
+                CurrentUser.Username ?? "Front Desk Staff"
+            );
+
+            CloseMemberAdjustmentModal();
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            AdjustmentErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsSubmittingAdjustment = false;
+        }
+    }
+}

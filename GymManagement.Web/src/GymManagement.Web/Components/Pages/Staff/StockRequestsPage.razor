@@ -1,0 +1,333 @@
+@page "/staff/stock-requests"
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Entities
+@using GymManagement.Domain.Enums
+@inject IInventoryService InventoryService
+@inject IOrganizationService OrgService
+@inject ITenantService TenantService
+@inject ICurrentUserService CurrentUser
+
+<div class="page-header-row mb-3">
+    <div>
+        <div class="page-title d-flex align-items-center gap-2">
+            <i class="bi bi-arrow-left-right text-primary"></i>
+            <span>Branch Stock Requisitions</span>
+        </div>
+    </div>
+    @if (!IsModuleDisabled)
+    {
+        <button class="btn btn-primary btn-sm px-3 shadow-sm d-flex align-items-center gap-1.5" @onclick="OpenNewRequestModal">
+            <i class="bi bi-plus-lg"></i>
+            <span>New Stock Request</span>
+        </button>
+    }
+</div>
+
+@if (IsModuleDisabled)
+{
+    <div class="gym-card p-5 text-center shadow-sm border-0 my-4 bg-white rounded-3">
+        <div class="mb-3 text-secondary" style="font-size: 3.5rem;">
+            <i class="bi bi-box-seam text-muted"></i>
+        </div>
+        <h4 class="fw-bold text-dark mb-2">Stock Requests &amp; Inventory Module is Deactivated</h4>
+        <p class="text-muted mx-auto mb-4" style="max-width: 520px;">
+            Stock requisitions and inventory operations are currently deactivated for this gym tenant subscription by SuperAdmin.
+        </p>
+    </div>
+}
+else
+{
+    <div class="gym-card mb-4 shadow-sm border">
+        <div class="gym-card-header d-flex justify-content-between align-items-center py-3 px-4">
+            <div>
+                <h6 class="mb-0 fw-bold text-dark">Branch Requisition Orders</h6>
+                <small class="text-muted" style="font-size: 0.8rem;">Track branch stock requests from submission to central dispatch and final delivery receipt.</small>
+            </div>
+            <span class="badge bg-light text-secondary border px-3 py-1.5 rounded-pill">
+                @Requests.Count Requests Total
+            </span>
+        </div>
+        <div class="table-responsive">
+            <table class="gym-table mb-0">
+                <thead>
+                    <tr>
+                        <th class="ps-4">Req Number</th>
+                        <th>Date &amp; Time</th>
+                        <th>Requesting Branch</th>
+                        <th>Fulfilling Source</th>
+                        <th>Items &amp; Given Qty</th>
+                        <th>Status</th>
+                        <th class="pe-4 text-end">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (Requests.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="7" class="text-center py-5 text-muted">
+                                <i class="bi bi-inbox fs-2 text-secondary d-block mb-2"></i>
+                                No stock requests submitted yet. Click "New Stock Request" to request stock from HQ.
+                            </td>
+                        </tr>
+                    }
+                    @foreach (var r in Requests)
+                    {
+                        <tr>
+                            <td class="ps-4">
+                                <code class="fw-bold">@r.RequestNumber</code>
+                                @if (!string.IsNullOrEmpty(r.Notes))
+                                {
+                                    <div class="text-muted small" style="font-size: 0.73rem;">@r.Notes</div>
+                                }
+                            </td>
+                            <td>
+                                <div class="text-dark small fw-semibold">@r.CreatedAt.ToString("yyyy-MM-dd")</div>
+                                <div class="text-muted" style="font-size: 0.72rem;">@r.CreatedAt.ToString("HH:mm") UTC</div>
+                            </td>
+                            <td class="fw-bold text-dark">
+                                <span class="badge bg-light text-danger border">
+                                    <i class="bi bi-geo-alt-fill me-1"></i>@(r.RequestingBranch?.BranchName ?? "Branch")
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge bg-light text-primary border">
+                                    <i class="bi bi-building me-1"></i>@(r.FulfillingBranch?.BranchName ?? "Central Warehouse (HQ)")
+                                </span>
+                            </td>
+                            <td>
+                                <div class="d-flex flex-column gap-1.5">
+                                    @foreach (var it in r.Items)
+                                    {
+                                        var hasAdjustment = it.ApprovedQuantity != it.RequestedQuantity && r.Status != StockRequestStatus.Pending;
+                                        <div class="p-1.5 rounded-2 @(hasAdjustment ? "bg-warning bg-opacity-10 border border-warning border-opacity-50" : "")">
+                                            <div class="fw-bold text-dark small">@(it.Product?.ProductName ?? $"Product #{it.ProductId}")</div>
+                                            <div class="d-flex align-items-center flex-wrap gap-1 mt-1">
+                                                @if (r.Status == StockRequestStatus.Pending)
+                                                {
+                                                    <span class="badge bg-light text-primary border" style="font-size: 0.74rem;">
+                                                        <span class="text-secondary fw-normal">Requested:</span> <strong>@it.RequestedQuantity pcs</strong>
+                                                    </span>
+                                                }
+                                                else if (hasAdjustment)
+                                                {
+                                                    <span class="badge bg-light text-secondary border text-decoration-line-through" style="font-size: 0.72rem;" title="Branch Requested Quantity">
+                                                        Req: @it.RequestedQuantity pcs
+                                                    </span>
+                                                    <i class="bi bi-arrow-right text-muted" style="font-size: 0.7rem;"></i>
+                                                    <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-50 fw-bold" style="font-size: 0.74rem;" title="Actual Quantity Dispatched / Given by Central HQ">
+                                                        Given: @it.ApprovedQuantity pcs
+                                                    </span>
+                                                    <span class="badge bg-warning bg-opacity-25 text-dark fw-bold" style="font-size: 0.68rem;" title="Adjusted Quantity Difference">
+                                                        (@(it.ApprovedQuantity < it.RequestedQuantity ? $"-{it.RequestedQuantity - it.ApprovedQuantity}" : $"+{it.ApprovedQuantity - it.RequestedQuantity}") pcs)
+                                                    </span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge bg-light text-primary border" style="font-size: 0.74rem;">
+                                                        <span class="text-secondary fw-normal">Given:</span> <strong>@it.ApprovedQuantity pcs</strong>
+                                                    </span>
+                                                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size: 0.68rem;">
+                                                        <i class="bi bi-check2"></i> Full (Req: @it.RequestedQuantity)
+                                                    </span>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            </td>
+                            <td>
+                                @if (r.Status == StockRequestStatus.Pending)
+                                {
+                                    <span class="badge bg-warning bg-opacity-15 text-dark border border-warning border-opacity-50 px-2.5 py-1.5 rounded-pill">
+                                        <i class="bi bi-hourglass-split me-1 text-warning"></i>Pending HQ Approval
+                                    </span>
+                                }
+                                else if (r.Status == StockRequestStatus.InTransit)
+                                {
+                                    <span class="badge bg-info bg-opacity-15 text-dark border border-info border-opacity-50 px-2.5 py-1.5 rounded-pill">
+                                        <i class="bi bi-truck me-1 text-info"></i>In Transit
+                                    </span>
+                                }
+                                else if (r.Status == StockRequestStatus.Received)
+                                {
+                                    <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-50 px-2.5 py-1.5 rounded-pill">
+                                        <i class="bi bi-check-circle me-1"></i>Delivered &amp; Received
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-success px-2.5 py-1 rounded-pill">@r.Status</span>
+                                }
+                            </td>
+                            <td class="pe-4 text-end">
+                                @if (r.Status == StockRequestStatus.InTransit)
+                                {
+                                    <button class="btn btn-success btn-sm py-1 px-3 shadow-sm rounded-pill d-inline-flex align-items-center gap-1.5" 
+                                            @onclick="() => ConfirmReceipt(r.Id)"
+                                            title="Confirm delivery arrival at your branch">
+                                        <i class="bi bi-box-seam"></i>
+                                        <span>Confirm Received</span>
+                                    </button>
+                                }
+                                else if (r.Status == StockRequestStatus.Pending)
+                                {
+                                    <span class="text-muted small" style="font-size: 0.75rem;">
+                                        <i class="bi bi-clock me-1 text-warning"></i>Awaiting HQ Dispatch
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="text-success small fw-bold d-inline-flex align-items-center gap-1">
+                                        <i class="bi bi-check-all fs-6"></i>
+                                        <span>Fulfilled</span>
+                                    </span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+
+<!-- Modal: New Stock Request -->
+@if (ShowModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold">
+                        <i class="bi bi-box-arrow-in-down me-1 text-primary"></i>
+                        Request Stock from Central / HQ
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Requesting Branch (Destination)</label>
+                        <select class="form-select" @bind="RequestingBranchId">
+                            @foreach (var b in Branches)
+                            {
+                                <option value="@b.Id">@b.BranchName</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Fulfilling Source (Origin Warehouse / HQ)</label>
+                        <select class="form-select" @bind="FulfillingBranchId">
+                            @foreach (var b in Branches)
+                            {
+                                <option value="@b.Id">@b.BranchName @(b.Id == 1 ? "(Central HQ Warehouse)" : "")</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Product to Restock</label>
+                        <select class="form-select" @bind="SelectedProductId">
+                            @foreach (var p in Products)
+                            {
+                                <option value="@p.Id">@p.ProductName (Available in System: @p.TotalStock pcs)</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Requested Quantity</label>
+                        <input type="number" class="form-control" @bind="RequestedQty" min="1" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Requisition Notes (Optional)</label>
+                        <input class="form-control" @bind="RequestNotes" placeholder="e.g. Restock needed for member promotions / weekend rush" />
+                    </div>
+
+                    <div class="alert alert-info small py-2 px-3 mb-0">
+                        <i class="bi bi-info-circle me-1"></i>
+                        ဤ Request အား Submit လုပ်ပါက Central HQ (Titan HQ) ၏ <strong>Inventory &amp; Stock Hub</strong> တွင် Noti အလိုအလျောက် ပေါ်မည်ဖြစ်ပြီး HQ မှ စစ်ဆေးကာ Dispatch ပြုလုပ်ပေးပါမည်။
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="() => ShowModal = false">Cancel</button>
+                    <button class="btn btn-primary btn-sm px-3" @onclick="SubmitRequest">Submit Requisition</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool IsModuleDisabled = false;
+    private List<StockRequest> Requests = new();
+    private List<ProductDto> Products = new();
+    private List<BranchDto> Branches = new();
+
+    private bool ShowModal = false;
+    private int RequestingBranchId = 2; // Default to Titan Hledan Center
+    private int FulfillingBranchId = 1; // Default to Titan Downtown (HQ)
+    private int SelectedProductId = 0;
+    private int RequestedQty = 10;
+    private string RequestNotes = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        if (CurrentUser.TenantId.HasValue)
+        {
+            var tenant = await TenantService.GetTenantByIdAsync(CurrentUser.TenantId.Value);
+            if (tenant != null && !tenant.InventoryModuleEnabled)
+            {
+                IsModuleDisabled = true;
+                return;
+            }
+        }
+        IsModuleDisabled = false;
+
+        Requests = await InventoryService.GetStockRequestsAsync();
+        Products = await InventoryService.GetProductsAsync();
+        Branches = await OrgService.GetBranchesAsync();
+
+        if (Branches.Count > 0)
+        {
+            RequestingBranchId = CurrentUser.BranchId ?? (Branches.Count > 1 ? Branches[1].Id : Branches[0].Id);
+            FulfillingBranchId = Branches[0].Id;
+        }
+
+        if (Products.Count > 0 && SelectedProductId == 0)
+        {
+            SelectedProductId = Products[0].Id;
+        }
+    }
+
+    private void OpenNewRequestModal()
+    {
+        RequestedQty = 10;
+        RequestNotes = string.Empty;
+        ShowModal = true;
+    }
+
+    private async Task SubmitRequest()
+    {
+        if (SelectedProductId <= 0 || RequestedQty <= 0) return;
+
+        var items = new List<(int, int)> { (SelectedProductId, RequestedQty) };
+        await InventoryService.CreateStockRequestAsync(RequestingBranchId, FulfillingBranchId, items, CurrentUser.Username ?? "Front Desk");
+        ShowModal = false;
+        await LoadData();
+    }
+
+    private async Task ConfirmReceipt(int reqId)
+    {
+        await InventoryService.ConfirmStockReceiptAsync(reqId, CurrentUser.Username ?? "Branch Staff");
+        await LoadData();
+    }
+}

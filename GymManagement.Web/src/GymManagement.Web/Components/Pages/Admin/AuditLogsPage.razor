@@ -1,0 +1,645 @@
+@page "/superadmin/audit-logs"
+@page "/admin/audit-logs"
+@using System.Text
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Entities
+@inject IAuditLogService AuditLogService
+@inject ITenantService TenantService
+@inject ICurrentUserService CurrentUser
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@if (!CurrentUser.IsSuperAdmin)
+{
+    <div class="card border-0 shadow-sm p-5 text-center mt-4">
+        <div class="mb-3 text-danger">
+            <i class="bi bi-shield-slash fs-1"></i>
+        </div>
+        <h4 class="fw-bold text-dark mb-2">Restricted Access (Super Admin Only)</h4>
+        <p class="text-secondary mb-4 mx-auto" style="max-width: 540px;">
+            Audit log records, forensic trails, and dispute evidence logs are strictly restricted to the Super Admin (Dev Company) for system compliance and tamper prevention.
+        </p>
+        <div>
+            <a href="/admin/dashboard" class="btn btn-primary btn-sm px-4">
+                <i class="bi bi-arrow-left me-1"></i> Return to HQ Dashboard
+            </a>
+        </div>
+    </div>
+}
+else
+{
+    <!-- Printable Official Dispute Report Header (Only visible when printed/PDF exported) -->
+    <div class="print-only mb-4 border-bottom pb-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+                <h3 class="fw-bold text-dark mb-0">CONFIDENTIAL AUDIT &amp; DISPUTE REPORT</h3>
+                <div class="text-muted small">Gym Management Cloud Platform - Master Audit Trail</div>
+            </div>
+            <div class="text-end small">
+                <div><strong>Generated Date:</strong> @DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss") UTC</div>
+                <div><strong>Investigator:</strong> @CurrentUser.Username (Super Admin)</div>
+            </div>
+        </div>
+        <div class="p-2 bg-light border rounded small mt-2">
+            <strong>Dispute Investigation Scope:</strong>
+            Tenant: @GetSelectedTenantName() |
+            Module: @(string.IsNullOrEmpty(SelectedModule) ? "All Modules" : SelectedModule) |
+            Action: @(string.IsNullOrEmpty(SelectedAction) ? "All Action Types" : SelectedAction) |
+            Records Examined: @FilteredLogs.Count
+        </div>
+    </div>
+
+    <!-- Screen UI Header -->
+    <div class="page-header-row no-print">
+        <div class="page-title">System Audit Logs</div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary btn-sm" @onclick="LoadData">
+                <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+            </button>
+            <button class="btn btn-outline-success btn-sm" @onclick="ExportCsv">
+                <i class="bi bi-file-earmark-spreadsheet me-1"></i> Export CSV
+            </button>
+            <button class="btn btn-primary btn-sm" @onclick="PrintDisputeReport">
+                <i class="bi bi-printer me-1"></i> Print / PDF Report
+            </button>
+        </div>
+    </div>
+
+    <!-- Quick Dispute Preset Shortcuts -->
+    <div class="gym-card mb-3 no-print">
+        <div class="p-2 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div class="d-flex align-items-center gap-2">
+                <span class="small fw-bold text-secondary text-uppercase"><i class="bi bi-filter me-1"></i>Presets:</span>
+                <button class="btn btn-sm @(ActivePreset == "ALL" ? "btn-dark" : "btn-light border")" @onclick="SetPresetAll">All Records</button>
+                <button class="btn btn-sm @(ActivePreset == "BILLING" ? "btn-dark" : "btn-light border")" @onclick="SetPresetBilling">Billing &amp; Rate</button>
+                <button class="btn btn-sm @(ActivePreset == "FEES" ? "btn-dark" : "btn-light border")" @onclick="SetPresetFees">Member Fees</button>
+                <button class="btn btn-sm @(ActivePreset == "ACCESS" ? "btn-dark" : "btn-light border")" @onclick="SetPresetAccess">Turnstile Access</button>
+                <button class="btn btn-sm @(ActivePreset == "INVENTORY" ? "btn-dark" : "btn-light border")" @onclick="SetPresetInventory">Stock &amp; Price</button>
+            </div>
+            <div class="small text-muted">
+                Showing <strong>@FilteredLogs.Count</strong> / @AllLogs.Count records
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Metric Stat Cards -->
+    <div class="row g-3 mb-4 no-print">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+                    <i class="bi bi-journal-text"></i>
+                </div>
+                <div>
+                    <div class="stat-val">@AllLogs.Count</div>
+                    <div class="stat-label">Total Logged Events</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-warning bg-opacity-10 text-warning">
+                    <i class="bi bi-tag"></i>
+                </div>
+                <div>
+                    <div class="stat-val">@AllLogs.Count(l => l.ActionType == "PRICE_CHANGE")</div>
+                    <div class="stat-label">Price / Rate Changes</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-success bg-opacity-10 text-success">
+                    <i class="bi bi-cash-stack"></i>
+                </div>
+                <div>
+                    <div class="stat-val">@AllLogs.Count(l => l.ActionType == "FEE_COLLECTION" || l.ActionType == "POS_SALE" || l.ActionType == "SETTLED")</div>
+                    <div class="stat-label">Financial &amp; Fee Events</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <div class="stat-icon bg-danger bg-opacity-10 text-danger">
+                    <i class="bi bi-shield-x"></i>
+                </div>
+                <div>
+                    <div class="stat-val">@AllLogs.Count(l => l.ActionType == "ACCESS_DENIED")</div>
+                    <div class="stat-label">Turnstile Access Denials</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Comprehensive Filter Controls -->
+    <div class="gym-card mb-4 no-print">
+        <div class="p-3">
+            <div class="row g-2 align-items-center">
+                <div class="col-md-3">
+                    <select class="form-select form-select-sm" @onchange="OnTenantChanged">
+                        <option value="">All Tenants</option>
+                        @foreach (var t in Tenants)
+                        {
+                            <option value="@t.Id" selected="@(SelectedTenantId == t.Id)">@t.CompanyName (@t.Code)</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-light border-end-0"><i class="bi bi-search text-muted"></i></span>
+                        <input type="text" class="form-control bg-light border-start-0" 
+                               placeholder="Search operator, entity, keywords..." 
+                               @bind="SearchText" @bind:event="oninput" @onkeyup="ApplyFilter" />
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <select class="form-select form-select-sm" @onchange="OnModuleChanged">
+                        <option value="">All Modules</option>
+                        <option value="Billing" selected="@(SelectedModule == "Billing")">Billing &amp; Subscription</option>
+                        <option value="Inventory" selected="@(SelectedModule == "Inventory")">Inventory &amp; Products</option>
+                        <option value="Membership" selected="@(SelectedModule == "Membership")">Membership &amp; Fees</option>
+                        <option value="AccessControl" selected="@(SelectedModule == "AccessControl")">Access Control (Turnstile)</option>
+                        <option value="Tenant" selected="@(SelectedModule == "Tenant")">Tenant Management</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <select class="form-select form-select-sm" @onchange="OnActionChanged">
+                        <option value="">All Action Types</option>
+                        <option value="PRICE_CHANGE" selected="@(SelectedAction == "PRICE_CHANGE")">PRICE_CHANGE</option>
+                        <option value="FEE_COLLECTION" selected="@(SelectedAction == "FEE_COLLECTION")">FEE_COLLECTION</option>
+                        <option value="POS_SALE" selected="@(SelectedAction == "POS_SALE")">POS_SALE</option>
+                        <option value="SETTLED" selected="@(SelectedAction == "SETTLED")">SETTLED</option>
+                        <option value="ACCESS_DENIED" selected="@(SelectedAction == "ACCESS_DENIED")">ACCESS_DENIED</option>
+                        <option value="STOCK_APPROVAL" selected="@(SelectedAction == "STOCK_APPROVAL")">STOCK_APPROVAL</option>
+                        <option value="CREATE" selected="@(SelectedAction == "CREATE")">CREATE</option>
+                        <option value="UPDATE" selected="@(SelectedAction == "UPDATE")">UPDATE</option>
+                    </select>
+                </div>
+                <div class="col-md-2 text-end">
+                    <button class="btn btn-outline-secondary btn-sm w-100" @onclick="ResetFilter">
+                        <i class="bi bi-x-circle me-1"></i> Reset
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Evidence Table with Horizontal Scroll & Paging -->
+    <div class="gym-card">
+        <div class="table-responsive" style="overflow-x: auto; overflow-y: visible;">
+            <table class="gym-table" style="min-width: 1160px; width: 100%;">
+                <thead>
+                    <tr>
+                        <th style="width: 160px;">Timestamp (UTC)</th>
+                        <th style="width: 160px;">Tenant / Branch</th>
+                        <th style="width: 140px;">Operator</th>
+                        <th style="width: 120px;">Module</th>
+                        <th style="width: 130px;">Action Type</th>
+                        <th style="min-width: 380px;">Evidence Details &amp; Values</th>
+                        <th style="width: 70px;" class="text-center no-print">View</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (FilteredLogs.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="7" class="text-center py-5 text-muted">
+                                <i class="bi bi-journal-x fs-1 d-block mb-2 text-secondary opacity-50"></i>
+                                No audit records found matching the dispute criteria.
+                            </td>
+                        </tr>
+                    }
+                    @foreach (var log in PagedLogs)
+                    {
+                        <tr>
+                            <td class="text-truncate">
+                                <div class="fw-semibold small">@log.Timestamp.ToString("yyyy-MM-dd HH:mm")</div>
+                                <span class="text-muted smaller no-print">@GetRelativeTime(log.Timestamp)</span>
+                            </td>
+                            <td class="text-truncate">
+                                <div class="fw-bold small text-dark text-truncate">@(log.Tenant != null ? log.Tenant.CompanyName : "Tenant #" + log.TenantId)</div>
+                                <div class="smaller text-muted text-truncate">@(log.Branch != null ? log.Branch.BranchName : "Central HQ")</div>
+                            </td>
+                            <td class="text-truncate">
+                                <div class="fw-bold small text-dark text-truncate">@log.Username</div>
+                                <span class="badge bg-light text-secondary border smaller">@log.UserRole</span>
+                            </td>
+                            <td>
+                                <span class="badge @GetModuleBadgeClass(log.Module)">@log.Module</span>
+                            </td>
+                            <td>
+                                <span class="badge @GetActionBadgeClass(log.ActionType)">@log.ActionType</span>
+                            </td>
+                            <td style="overflow: hidden;">
+                                <div style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; line-height: 1.42;" title="@log.Details">
+                                    <span class="fw-semibold small text-dark">@log.Details</span>
+                                    @if (!string.IsNullOrEmpty(log.OldValues) || !string.IsNullOrEmpty(log.NewValues))
+                                    {
+                                        <span class="smaller ms-1">
+                                            @if (!string.IsNullOrEmpty(log.OldValues))
+                                            {
+                                                <span class="text-danger me-1"><b>Before:</b> <code>@log.OldValues</code></span>
+                                            }
+                                            @if (!string.IsNullOrEmpty(log.NewValues))
+                                            {
+                                                <span class="text-success"><b>After:</b> <code>@log.NewValues</code></span>
+                                            }
+                                        </span>
+                                    }
+                                </div>
+                            </td>
+                            <td class="text-center no-print">
+                                <button class="btn btn-outline-secondary btn-sm p-1 px-2" @onclick="() => ViewDetail(log)" title="Examine Evidence">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Controls Bar (Min 5 items selectable) -->
+        <div class="p-3 bg-white border-top d-flex align-items-center justify-content-between flex-wrap gap-2 no-print">
+            <div class="d-flex align-items-center gap-2">
+                <span class="small text-secondary fw-semibold">Show</span>
+                <select class="form-select form-select-sm" style="width: 75px; font-weight: 700;" @onchange="OnPageSizeChanged">
+                    @foreach (var size in PageSizeOptions)
+                    {
+                        <option value="@size" selected="@(PageSize == size)">@size</option>
+                    }
+                </select>
+                <span class="small text-secondary fw-semibold">entries</span>
+                <span class="small text-muted ms-3">
+                    Showing <strong>@GetStartIndex()</strong> to <strong>@GetEndIndex()</strong> of <strong>@FilteredLogs.Count</strong> records
+                </span>
+            </div>
+
+            <div class="d-flex align-items-center gap-1">
+                <button class="btn btn-outline-secondary btn-sm px-2.5" @onclick="() => SetPage(1)" disabled="@(CurrentPage <= 1)" title="First Page">
+                    <i class="bi bi-chevron-double-left"></i>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm px-2.5" @onclick="PreviousPage" disabled="@(CurrentPage <= 1)" title="Previous Page">
+                    <i class="bi bi-chevron-left"></i>
+                </button>
+
+                <span class="small fw-bold px-3 text-dark">
+                    Page @CurrentPage of @TotalPages
+                </span>
+
+                <button class="btn btn-outline-secondary btn-sm px-2.5" @onclick="NextPage" disabled="@(CurrentPage >= TotalPages)" title="Next Page">
+                    <i class="bi bi-chevron-right"></i>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm px-2.5" @onclick="() => SetPage(TotalPages)" disabled="@(CurrentPage >= TotalPages)" title="Last Page">
+                    <i class="bi bi-chevron-double-right"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Official Attestation Section (Printable Report Only) -->
+    <div class="print-only mt-5 pt-4 border-top">
+        <div class="row text-center">
+            <div class="col-6">
+                <div class="mb-5 pb-3">_______________________________________</div>
+                <div class="fw-bold">Super Admin Auditor / Dev Authority</div>
+                <div class="small text-muted">Signature &amp; Date</div>
+            </div>
+            <div class="col-6">
+                <div class="mb-5 pb-3">_______________________________________</div>
+                <div class="fw-bold">Tenant Representative / Management</div>
+                <div class="small text-muted">Acknowledgement &amp; Date</div>
+            </div>
+        </div>
+        <div class="text-center mt-4 smaller text-muted fst-italic">
+            Note: This tamper-evident audit report is cryptographically bound to system transaction ledgers and reflects unalterable operational logs for dispute arbitration.
+        </div>
+    </div>
+
+    <!-- Log Detail Modal -->
+    @if (SelectedLog != null)
+    {
+        <div class="modal fade show d-block no-print" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content border-0 shadow">
+                    <div class="modal-header border-bottom py-3">
+                        <h6 class="modal-title fw-bold mb-0">
+                            <i class="bi bi-shield-check text-primary me-2"></i>Audit Log Record #@SelectedLog.Id
+                        </h6>
+                        <button type="button" class="btn-close" @onclick="CloseDetail"></button>
+                    </div>
+                    <div class="modal-body p-4">
+                        <div class="list-group list-group-flush small">
+                            <div class="list-group-item d-flex justify-content-between px-0">
+                                <span class="text-muted">Timestamp (UTC):</span>
+                                <span class="fw-semibold">@SelectedLog.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between px-0">
+                                <span class="text-muted">Tenant &amp; Branch:</span>
+                                <span class="fw-semibold">@(SelectedLog.Tenant != null ? SelectedLog.Tenant.CompanyName : "Tenant #" + SelectedLog.TenantId) (@(SelectedLog.Branch != null ? SelectedLog.Branch.BranchName : "Central HQ"))</span>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between px-0">
+                                <span class="text-muted">Operator:</span>
+                                <span class="fw-semibold">@SelectedLog.Username (@SelectedLog.UserRole)</span>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between px-0">
+                                <span class="text-muted">Module / Area:</span>
+                                <span class="badge @GetModuleBadgeClass(SelectedLog.Module)">@SelectedLog.Module</span>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between px-0">
+                                <span class="text-muted">Action Type:</span>
+                                <span class="badge @GetActionBadgeClass(SelectedLog.ActionType)">@SelectedLog.ActionType</span>
+                            </div>
+                            <div class="list-group-item d-flex justify-content-between px-0">
+                                <span class="text-muted">Entity Target:</span>
+                                <span class="fw-semibold">@SelectedLog.EntityName (ID: @SelectedLog.EntityId)</span>
+                            </div>
+                            <div class="list-group-item px-0">
+                                <div class="text-muted mb-1">Details:</div>
+                                <div class="p-2 bg-light rounded text-dark border">@SelectedLog.Details</div>
+                            </div>
+                            @if (!string.IsNullOrEmpty(SelectedLog.OldValues))
+                            {
+                                <div class="list-group-item px-0">
+                                    <div class="text-muted mb-1 text-danger fw-semibold">Old / Previous Value:</div>
+                                    <div class="p-2 bg-danger bg-opacity-10 rounded text-danger border border-danger border-opacity-25">
+                                        <code>@SelectedLog.OldValues</code>
+                                    </div>
+                                </div>
+                            }
+                            @if (!string.IsNullOrEmpty(SelectedLog.NewValues))
+                            {
+                                <div class="list-group-item px-0">
+                                    <div class="text-muted mb-1 text-success fw-semibold">New / Modified Value:</div>
+                                    <div class="p-2 bg-success bg-opacity-10 rounded text-success border border-success border-opacity-25">
+                                        <code>@SelectedLog.NewValues</code>
+                                    </div>
+                                </div>
+                            }
+                            <div class="list-group-item d-flex justify-content-between px-0">
+                                <span class="text-muted">Origin IP Address:</span>
+                                <span><code>@SelectedLog.IpAddress</code></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-top py-2">
+                        <button type="button" class="btn btn-secondary btn-sm" @onclick="CloseDetail">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<AuditLog> AllLogs = new();
+    private List<AuditLog> FilteredLogs = new();
+    private List<TenantDto> Tenants = new();
+
+    private int? SelectedTenantId;
+    private string SearchText = "";
+    private string SelectedModule = "";
+    private string SelectedAction = "";
+    private string ActivePreset = "ALL";
+    private AuditLog? SelectedLog;
+
+    private int CurrentPage = 1;
+    private int PageSize = 5;
+    private readonly int[] PageSizeOptions = new[] { 5, 10, 20, 50, 100 };
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling((double)FilteredLogs.Count / PageSize));
+    private IEnumerable<AuditLog> PagedLogs => FilteredLogs.Skip((CurrentPage - 1) * PageSize).Take(PageSize);
+
+    private int GetStartIndex() => FilteredLogs.Count == 0 ? 0 : (CurrentPage - 1) * PageSize + 1;
+    private int GetEndIndex() => Math.Min(CurrentPage * PageSize, FilteredLogs.Count);
+
+    private void SetPage(int page)
+    {
+        CurrentPage = Math.Clamp(page, 1, TotalPages);
+    }
+
+    private void NextPage()
+    {
+        if (CurrentPage < TotalPages) CurrentPage++;
+    }
+
+    private void PreviousPage()
+    {
+        if (CurrentPage > 1) CurrentPage--;
+    }
+
+    private void OnPageSizeChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int size) && size > 0)
+        {
+            PageSize = size;
+            CurrentPage = 1;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        Tenants = await TenantService.GetTenantsAsync();
+        AllLogs = await AuditLogService.GetAuditLogsAsync(limit: 500);
+        ApplyFilter();
+    }
+
+    private string GetSelectedTenantName()
+    {
+        if (!SelectedTenantId.HasValue) return "All Tenants";
+        var t = Tenants.FirstOrDefault(x => x.Id == SelectedTenantId.Value);
+        return t != null ? t.CompanyName : $"Tenant #{SelectedTenantId.Value}";
+    }
+
+    private void SetPresetAll()
+    {
+        ActivePreset = "ALL";
+        SelectedModule = "";
+        SelectedAction = "";
+        ApplyFilter();
+    }
+
+    private void SetPresetBilling()
+    {
+        ActivePreset = "BILLING";
+        SelectedModule = "Billing";
+        SelectedAction = "";
+        ApplyFilter();
+    }
+
+    private void SetPresetFees()
+    {
+        ActivePreset = "FEES";
+        SelectedModule = "Membership";
+        SelectedAction = "FEE_COLLECTION";
+        ApplyFilter();
+    }
+
+    private void SetPresetAccess()
+    {
+        ActivePreset = "ACCESS";
+        SelectedModule = "AccessControl";
+        SelectedAction = "ACCESS_DENIED";
+        ApplyFilter();
+    }
+
+    private void SetPresetInventory()
+    {
+        ActivePreset = "INVENTORY";
+        SelectedModule = "Inventory";
+        SelectedAction = "";
+        ApplyFilter();
+    }
+
+    private void OnTenantChanged(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        if (int.TryParse(val, out int tId))
+        {
+            SelectedTenantId = tId;
+        }
+        else
+        {
+            SelectedTenantId = null;
+        }
+        ApplyFilter();
+    }
+
+    private void OnModuleChanged(ChangeEventArgs e)
+    {
+        SelectedModule = e.Value?.ToString() ?? "";
+        ApplyFilter();
+    }
+
+    private void OnActionChanged(ChangeEventArgs e)
+    {
+        SelectedAction = e.Value?.ToString() ?? "";
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        var q = AllLogs.AsEnumerable();
+
+        if (SelectedTenantId.HasValue)
+        {
+            q = q.Where(l => l.TenantId == SelectedTenantId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(SelectedModule))
+        {
+            q = q.Where(l => l.Module.Equals(SelectedModule, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(SelectedAction))
+        {
+            q = q.Where(l => l.ActionType.Equals(SelectedAction, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            var s = SearchText.Trim().ToLower();
+            q = q.Where(l => l.Username.ToLower().Contains(s)
+                          || l.Details.ToLower().Contains(s)
+                          || l.EntityId.ToLower().Contains(s)
+                          || l.EntityName.ToLower().Contains(s)
+                          || (l.Tenant != null && l.Tenant.CompanyName.ToLower().Contains(s))
+                          || (l.OldValues != null && l.OldValues.ToLower().Contains(s))
+                          || (l.NewValues != null && l.NewValues.ToLower().Contains(s)));
+        }
+
+        FilteredLogs = q.ToList();
+        CurrentPage = 1;
+    }
+
+    private void ResetFilter()
+    {
+        SelectedTenantId = null;
+        SearchText = "";
+        SelectedModule = "";
+        SelectedAction = "";
+        ActivePreset = "ALL";
+        ApplyFilter();
+    }
+
+    private async Task PrintDisputeReport()
+    {
+        await JS.InvokeVoidAsync("printReport");
+    }
+
+    private async Task ExportCsv()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("LogId,TimestampUTC,Tenant,Branch,Operator,Role,Module,ActionType,EntityName,EntityId,Details,OldValues,NewValues,IpAddress");
+
+        foreach (var log in FilteredLogs)
+        {
+            var tenantName = EscapeCsv(log.Tenant != null ? log.Tenant.CompanyName : $"Tenant #{log.TenantId}");
+            var branchName = EscapeCsv(log.Branch != null ? log.Branch.BranchName : "Central HQ");
+            var details = EscapeCsv(log.Details);
+            var oldVals = EscapeCsv(log.OldValues ?? "");
+            var newVals = EscapeCsv(log.NewValues ?? "");
+
+            sb.AppendLine($"{log.Id},{log.Timestamp:yyyy-MM-dd HH:mm:ss},{tenantName},{branchName},{log.Username},{log.UserRole},{log.Module},{log.ActionType},{log.EntityName},{log.EntityId},{details},{oldVals},{newVals},{log.IpAddress}");
+        }
+
+        var fileName = $"Audit_Dispute_Report_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv";
+        await JS.InvokeVoidAsync("downloadFile", fileName, "text/csv;charset=utf-8;", sb.ToString());
+    }
+
+    private string EscapeCsv(string val)
+    {
+        if (string.IsNullOrEmpty(val)) return "\"\"";
+        var escaped = val.Replace("\"", "\"\"");
+        return "\"" + escaped + "\"";
+    }
+
+    private void ViewDetail(AuditLog log)
+    {
+        SelectedLog = log;
+    }
+
+    private void CloseDetail()
+    {
+        SelectedLog = null;
+    }
+
+    private string GetRelativeTime(DateTime dt)
+    {
+        var span = DateTime.UtcNow - dt;
+        if (span.TotalDays >= 7) return dt.ToString("dd MMM yyyy");
+        if (span.TotalHours >= 24) return $"{(int)span.TotalDays}d ago";
+        if (span.TotalMinutes >= 60) return $"{(int)span.TotalHours}h ago";
+        if (span.TotalMinutes >= 1) return $"{(int)span.TotalMinutes}m ago";
+        return "just now";
+    }
+
+    private string GetModuleBadgeClass(string module) => module switch
+    {
+        "Billing" => "bg-primary text-white",
+        "Inventory" => "bg-info text-dark",
+        "Membership" => "bg-success text-white",
+        "AccessControl" => "bg-danger text-white",
+        "Tenant" => "bg-dark text-white",
+        _ => "bg-secondary text-white"
+    };
+
+    private string GetActionBadgeClass(string action) => action switch
+    {
+        "PRICE_CHANGE" => "bg-warning text-dark border border-warning",
+        "FEE_COLLECTION" => "bg-success bg-opacity-10 text-success border border-success",
+        "POS_SALE" => "bg-primary bg-opacity-10 text-primary border border-primary",
+        "SETTLED" => "bg-info text-dark",
+        "ACCESS_DENIED" => "bg-danger text-white",
+        "STOCK_APPROVAL" => "bg-info text-dark",
+        "CREATE" => "bg-primary text-white",
+        "UPDATE" => "bg-secondary text-white",
+        _ => "bg-light text-dark border"
+    };
+}

@@ -1,0 +1,418 @@
+@page "/"
+@page "/superadmin/tenants"
+@using GymManagement.Application.Common.Interfaces
+@using GymManagement.Application.DTOs
+@using GymManagement.Application.Services
+@using GymManagement.Domain.Enums
+@inject ITenantService TenantService
+@inject ICurrentUserService CurrentUser
+@inject NavigationManager Navigation
+
+@if (CurrentUser.IsSuperAdmin)
+{
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+    <div>
+        <h3 class="fw-bold mb-0" style="color: var(--text-main); font-weight: 800; font-size: 1.35rem;">Tenant Companies Management</h3>
+    </div>
+    <div>
+        <button class="btn btn-primary px-3 py-1.5 rounded-pill shadow-sm d-flex align-items-center gap-1.5 fw-bold" @onclick="OpenCreateModal" style="background: #00b894; border-color: #00b894; font-size: 0.85rem;">
+            <i class="bi bi-plus-circle-fill"></i>
+            <span>+ Add New Tenant</span>
+        </button>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+                <i class="bi bi-buildings"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Tenants.Count</div>
+                <div class="stat-label">Total Tenants</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-success bg-opacity-10 text-success">
+                <i class="bi bi-check-circle"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Tenants.Count(t => t.Status == TenantStatus.Active)</div>
+                <div class="stat-label">Active Tenants</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-info bg-opacity-10 text-info">
+                <i class="bi bi-people"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Tenants.Sum(t => t.ActiveMemberCount)</div>
+                <div class="stat-label">Active Gym Members</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="stat-icon bg-warning bg-opacity-10 text-warning">
+                <i class="bi bi-cash-stack"></i>
+            </div>
+            <div>
+                <div class="stat-val">@Tenants.Sum(t => t.ActiveMemberCount * t.RatePerActiveMember).ToString("N0")</div>
+                <div class="stat-label">Estimated Postpaid</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="gym-card">
+    <div class="table-responsive">
+        <table class="gym-table">
+            <thead>
+                <tr>
+                    <th>Tenant / Company</th>
+                    <th>Code</th>
+                    <th>Contact</th>
+                    <th>Branches</th>
+                    <th>Active Members</th>
+                    <th>Rate / Member</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (Tenants.Count == 0)
+                {
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-secondary">No tenants registered yet.</td>
+                    </tr>
+                }
+                @foreach (var t in Tenants)
+                {
+                    <tr>
+                        <td class="fw-bold">@t.CompanyName</td>
+                        <td><span class="badge bg-light text-dark border">@t.Code</span></td>
+                        <td>
+                            <div>@t.ContactPerson</div>
+                            <small class="text-secondary">@t.ContactPhone</small>
+                        </td>
+                        <td>@t.BranchCount / @t.MaxBranches</td>
+                        <td class="fw-bold text-primary">@t.ActiveMemberCount</td>
+                        <td>@t.RatePerActiveMember.ToString("N0") MMK</td>
+                        <td>
+                            <span class="badge-clean @(t.Status == TenantStatus.Active ? "badge-active" : "badge-expired")">
+                                @t.Status
+                            </span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" @onclick="() => OpenEditModal(t)" title="Edit Tenant details">
+                                    <i class="bi bi-pencil me-1"></i> Edit
+                                </button>
+                                <button class="btn btn-outline-warning text-dark" @onclick="() => OpenResetAdminModal(t)" title="Reset Tenant Admin Password">
+                                    <i class="bi bi-key-fill me-1"></i> Reset Password
+                                </button>
+                                <button class="btn btn-outline-secondary" @onclick="() => ToggleStatus(t)">
+                                    @(t.Status == TenantStatus.Active ? "Suspend" : "Activate")
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@if (ShowModal)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(IsEditMode ? "Edit Tenant Company" : "Create Tenant Company")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Company Name</label>
+                        <input class="form-control" @bind="CurrentTenant.CompanyName" placeholder="e.g. Apex Fitness Club" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Company Code</label>
+                        <input class="form-control" @bind="CurrentTenant.Code" placeholder="e.g. APEX" disabled="@IsEditMode" />
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Contact Person</label>
+                            <input class="form-control" @bind="CurrentTenant.ContactPerson" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Contact Phone</label>
+                            <input class="form-control" @bind="CurrentTenant.ContactPhone" />
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Monthly Rate / Active Member (MMK)</label>
+                            <input type="number" class="form-control fw-bold text-primary" @bind="CurrentTenant.RatePerActiveMember" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">Max Branches Allowed</label>
+                            <input type="number" class="form-control" @bind="CurrentTenant.MaxBranches" />
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="CloseModal">Cancel</button>
+                    <button class="btn btn-primary btn-sm" @onclick="SaveTenant">@(IsEditMode ? "Update Tenant" : "Save Tenant")</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal: Reset Tenant Admin Password (Super Admin) -->
+@if (ShowResetAdminModal && SelectedTenantForReset != null)
+{
+    <div class="modal fade show d-block" style="background: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-light">
+                    <h5 class="modal-title fs-6 fw-bold d-flex align-items-center gap-2">
+                        <i class="bi bi-shield-lock-fill text-warning"></i>
+                        <span>Reset Tenant Admin Password</span>
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseResetAdminModal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Tenant Account Summary -->
+                    <div class="p-3 mb-3 rounded-3 bg-light border">
+                        <div class="d-flex justify-content-between align-items-center mb-1.5">
+                            <span class="text-secondary small">Company:</span>
+                            <span class="fw-bold text-dark">@SelectedTenantForReset.CompanyName</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-1.5">
+                            <span class="text-secondary small">Tenant Code:</span>
+                            <span class="badge bg-secondary bg-opacity-25 text-dark border">@SelectedTenantForReset.Code</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center mb-1.5">
+                            <span class="text-secondary small">Contact Person:</span>
+                            <span class="text-dark small">@SelectedTenantForReset.ContactPerson (@SelectedTenantForReset.ContactPhone)</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="text-secondary small">Admin Username:</span>
+                            <span class="badge bg-primary">@(TenantAdminUser?.Username ?? $"{SelectedTenantForReset.Code.ToLower()}admin")</span>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label class="form-label small fw-bold mb-0">New Password for Tenant Admin</label>
+                            <button type="button" class="btn btn-link btn-sm p-0 text-decoration-none text-primary" @onclick="GenerateRandomAdminPassword">
+                                <i class="bi bi-shuffle me-1"></i>Generate Password
+                            </button>
+                        </div>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light text-muted">
+                                <i class="bi bi-key"></i>
+                            </span>
+                            <input type="@(ShowAdminPassword ? "text" : "password")" 
+                                   class="form-control" 
+                                   placeholder="Enter new admin password" 
+                                   @bind="NewAdminPassword" />
+                            <button class="btn btn-outline-secondary" type="button" @onclick="() => ShowAdminPassword = !ShowAdminPassword">
+                                <i class="bi @(ShowAdminPassword ? "bi-eye-slash" : "bi-eye")"></i>
+                            </button>
+                        </div>
+                        <div class="form-text small text-muted">
+                            Provide this password to the Gym HQ owner or manager to access their admin dashboard.
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(AdminResetStatusMessage))
+                    {
+                        <div class="alert @(AdminResetStatusSuccess ? "alert-success" : "alert-danger") py-2 small mb-0 d-flex align-items-center gap-2">
+                            <i class="bi @(AdminResetStatusSuccess ? "bi-check-circle-fill" : "bi-exclamation-triangle-fill")"></i>
+                            <span>@AdminResetStatusMessage</span>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm rounded-pill px-3" @onclick="CloseResetAdminModal">Close</button>
+                    <button type="button" class="btn btn-warning btn-sm rounded-pill px-3 text-dark fw-semibold" 
+                            @onclick="SubmitResetAdminPassword" 
+                            disabled="@(string.IsNullOrWhiteSpace(NewAdminPassword) || IsResettingAdmin)">
+                        @if (IsResettingAdmin)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                            <span>Updating...</span>
+                        }
+                        else
+                        {
+                            <i class="bi bi-check-circle me-1"></i>
+                            <span>Save Password</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+}
+
+@code {
+    private List<TenantDto> Tenants = new();
+    private bool ShowModal = false;
+    private bool IsEditMode = false;
+    private TenantDto CurrentTenant = new() { RatePerActiveMember = 1500, MaxBranches = 5 };
+
+    // Tenant Admin Reset Password State
+    private bool ShowResetAdminModal = false;
+    private TenantDto? SelectedTenantForReset = null;
+    private StaffUserDto? TenantAdminUser = null;
+    private string NewAdminPassword = string.Empty;
+    private bool ShowAdminPassword = false;
+    private bool IsResettingAdmin = false;
+    private string AdminResetStatusMessage = string.Empty;
+    private bool AdminResetStatusSuccess = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (CurrentUser.IsTenantAdmin)
+        {
+            Navigation.NavigateTo("/admin/dashboard", replace: true);
+            return;
+        }
+        else if (CurrentUser.IsBranchStaff)
+        {
+            Navigation.NavigateTo("/staff/checkin", replace: true);
+            return;
+        }
+
+        await LoadTenants();
+    }
+
+    private async Task LoadTenants()
+    {
+        Tenants = await TenantService.GetTenantsAsync();
+    }
+
+    private async Task OpenResetAdminModal(TenantDto tenant)
+    {
+        SelectedTenantForReset = tenant;
+        TenantAdminUser = await TenantService.GetTenantAdminAsync(tenant.Id);
+        NewAdminPassword = $"{tenant.Code.ToUpper()}Admin@{Random.Shared.Next(1000, 9999)}";
+        ShowAdminPassword = true;
+        AdminResetStatusMessage = string.Empty;
+        AdminResetStatusSuccess = false;
+        IsResettingAdmin = false;
+        ShowResetAdminModal = true;
+    }
+
+    private void CloseResetAdminModal()
+    {
+        ShowResetAdminModal = false;
+        SelectedTenantForReset = null;
+        TenantAdminUser = null;
+        NewAdminPassword = string.Empty;
+        AdminResetStatusMessage = string.Empty;
+    }
+
+    private void GenerateRandomAdminPassword()
+    {
+        var code = SelectedTenantForReset?.Code ?? "GYM";
+        NewAdminPassword = $"{code.ToUpper()}Master#{Random.Shared.Next(1000, 9999)}";
+        ShowAdminPassword = true;
+    }
+
+    private async Task SubmitResetAdminPassword()
+    {
+        if (SelectedTenantForReset == null || string.IsNullOrWhiteSpace(NewAdminPassword)) return;
+
+        IsResettingAdmin = true;
+        AdminResetStatusMessage = string.Empty;
+
+        try
+        {
+            var success = await TenantService.ResetTenantAdminPasswordAsync(SelectedTenantForReset.Id, NewAdminPassword.Trim());
+            if (success)
+            {
+                AdminResetStatusSuccess = true;
+                AdminResetStatusMessage = $"Password for '{SelectedTenantForReset.CompanyName}' HQ Admin successfully updated!";
+            }
+            else
+            {
+                AdminResetStatusSuccess = false;
+                AdminResetStatusMessage = "Failed to update tenant admin password.";
+            }
+        }
+        catch (Exception ex)
+        {
+            AdminResetStatusSuccess = false;
+            AdminResetStatusMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            IsResettingAdmin = false;
+        }
+    }
+
+    private void OpenCreateModal()
+    {
+        IsEditMode = false;
+        CurrentTenant = new TenantDto { RatePerActiveMember = 1500, MaxBranches = 5 };
+        ShowModal = true;
+    }
+
+    private void OpenEditModal(TenantDto tenant)
+    {
+        IsEditMode = true;
+        CurrentTenant = new TenantDto
+        {
+            Id = tenant.Id,
+            CompanyName = tenant.CompanyName,
+            Code = tenant.Code,
+            ContactPerson = tenant.ContactPerson,
+            ContactPhone = tenant.ContactPhone,
+            ContactEmail = tenant.ContactEmail,
+            RatePerActiveMember = tenant.RatePerActiveMember,
+            MaxBranches = tenant.MaxBranches,
+            Status = tenant.Status
+        };
+        ShowModal = true;
+    }
+
+    private void CloseModal()
+    {
+        ShowModal = false;
+    }
+
+    private async Task SaveTenant()
+    {
+        if (string.IsNullOrWhiteSpace(CurrentTenant.CompanyName) || string.IsNullOrWhiteSpace(CurrentTenant.Code)) return;
+
+        if (IsEditMode)
+        {
+            await TenantService.UpdateTenantAsync(CurrentTenant);
+        }
+        else
+        {
+            await TenantService.CreateTenantAsync(CurrentTenant);
+        }
+
+        ShowModal = false;
+        await LoadTenants();
+    }
+
+    private async Task ToggleStatus(TenantDto tenant)
+    {
+        tenant.Status = tenant.Status == TenantStatus.Active ? TenantStatus.Suspended : TenantStatus.Active;
+        await TenantService.UpdateTenantAsync(tenant);
+        await LoadTenants();
+    }
+}
